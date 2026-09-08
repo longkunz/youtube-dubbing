@@ -1,0 +1,3 @@
+# 2. HTMLMediaElement Volume Lerp for Audio Ducking
+
+We decided to implement Audio Ducking by animating `HTMLMediaElement.volume` using `requestAnimationFrame` linear interpolation (150ms crossfade), rather than using the Web Audio API `AudioContext.createMediaElementSource()` and `GainNode`. While `GainNode` is the standard Web Audio approach, YouTube streams video and audio from cross-origin CDN domains (`*.googlevideo.com`) without permissive CORS headers, causing `MediaElementAudioSourceNode` to output silence. Direct property interpolation bypasses CORS restrictions entirely while delivering smooth volume transitions.
