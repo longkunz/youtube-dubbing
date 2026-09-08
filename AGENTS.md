@@ -23,16 +23,31 @@ To save new persistent memories, follow the `/remember` workflow defined at `.ag
 
 | Phase / Role | Harness / Agent | Model / Execution | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **coder** | `opencode` (hoặc `antigravity`) | `opencode/muse-spark-1.3-contributor-free` (hoặc `agy`) via Orca Terminal | TDD implementation at public seams |
+| **coder** | `antigravity` (`agy`) | `claude-sonnet-4-6` (fallback: `gemini-3.8-flash-high`) via Orca Terminal | TDD implementation at public seams |
 | **reviewer** | `opencode` | `opencode/muse-spark-1.3-contributor-free` via Orca Terminal | Independent audit (Standards, Spec, Security & Perf) |
 
 ### Verification Gates
 - **Typecheck**: `npm run typecheck`
 - **Test Suite**: `npm test`
 
-### OpenCode Configuration (Free Zen Model)
-- **Model**: `opencode/muse-spark-1.3-contributor-free` (hoạt động miễn phí, không cần đăng nhập/API key).
-- **Invocation**: Khởi chạy với cờ `-m opencode/muse-spark-1.3-contributor-free`.
+### Model Configuration
+
+#### 1. Coder (Antigravity CLI / agy)
+- **Primary Model**: `claude-sonnet-4-6` (Claude Sonnet 4.6 Thinking).
+- **Fallback Model**: `gemini-3.8-flash-high` (Gemini 3.8 Flash High).
+- **Invocation**:
+  ```bash
+  orca terminal create --command "agy --dangerously-skip-permissions --model claude-sonnet-4-6"
+  # Fallback:
+  # orca terminal create --command "agy --dangerously-skip-permissions --model gemini-3.8-flash-high"
+  ```
+
+#### 2. Reviewer (OpenCode)
+- **Model**: `opencode/muse-spark-1.3-contributor-free` (miễn phí, không cần đăng nhập/API key).
+- **Invocation**:
+  ```bash
+  orca terminal create --command "opencode -m opencode/muse-spark-1.3-contributor-free"
+  ```
 
 ### Orca Orchestration Protocol (Windows)
 Quy trình điều phối đa tác nhân độc lập qua Orca Terminal trên Windows:
@@ -41,14 +56,13 @@ Quy trình điều phối đa tác nhân độc lập qua Orca Terminal trên Wi
    - Orchestrator chuẩn bị prompt TDD (Red -> Green -> Refactor) tại `.scratch/coder-prompt.md`.
    - Tạo terminal mới cho Coder worker:
      ```bash
-     orca terminal create --command "opencode -m opencode/muse-spark-1.3-contributor-free"
-     # hoặc nếu dùng agy: orca terminal create --command "agy --dangerously-skip-permissions"
+     orca terminal create --command "agy --dangerously-skip-permissions --model claude-sonnet-4-6"
      ```
    - Gửi chỉ dẫn TDD cho Coder:
      ```bash
-     orca terminal send --terminal <coder_terminal_id> --text "<chỉ_dẫn_tdd_hoặc_đọc_.scratch/coder-prompt.md>" --enter
+     orca terminal send --terminal <coder_terminal_id> --text "Read .scratch/coder-prompt.md and implement the feature test-first. Follow Red-Green-Refactor, run tests, and report when all tests pass." --enter
      ```
-   - Theo dõi tiến độ Coder bằng `orca terminal read --terminal <coder_terminal_id>` cho đến khi test và typecheck hoàn tất.
+   - Theo dõi tiến độ Coder bằng `orca terminal read --terminal <coder_terminal_id>` cho đến khi hoàn thành.
    - Đóng terminal Coder:
      ```bash
      orca terminal close --terminal <coder_terminal_id>
