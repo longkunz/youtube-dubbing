@@ -44,3 +44,18 @@ export interface PlayerResponseCaptions {
     }>;
   };
 }
+
+/**
+ * Voice profile for TTS synthesis.
+ * Follows VoiceProfile contract from docs/SPEC.md and CONTEXT.md.
+ */
+export interface VoiceProfile {
+  id: string;
+  name: string;
+  gender: 'female' | 'male';
+  locale: string;
+  provider: 'edge-tts' | 'elevenlabs' | 'web-speech';
+  voiceKey: string;
+  pitch?: string; // e.g. "+0Hz", "+5Hz" (SSML prosody pitch parameter)
+  rate?: string;  // e.g. "+0%", "+10%" (SSML prosody rate parameter)
+}
