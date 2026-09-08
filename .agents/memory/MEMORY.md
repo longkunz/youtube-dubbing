@@ -12,6 +12,8 @@
 - [project] Primary test seam is DubbingOrchestrator for full-pipeline TDD → project-conventions.md
 - [project] Subtitle overlay: canonical rgba(8, 8, 8, 0.84) black pill with crisp #ffffff text → project-conventions.md
 - [project] Persistent cache: SegmentCache via idb promise wrapper → project-conventions.md
+- [project] Multi-agent: Coder is agy (Sonnet 4.6 / Gemini 3.8 Flash High), Reviewer is OpenCode (Muse Spark Free) → project-conventions.md
+- [project] Orchestration: Always dispatch Coder & Reviewer in dedicated Orca Terminals on Windows → project-conventions.md
 
 ## Tech Decisions
 - [project] 100% Client-Side BYOK architecture (ADR-0001) → tech-decisions.md
