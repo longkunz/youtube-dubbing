@@ -9,6 +9,7 @@ export interface StorageUsageStats {
   totalBytes: number;
   transcriptCount: number;
   audioSegmentCount: number;
+  videoCount?: number;
 }
 
 /**
@@ -205,6 +206,19 @@ export class SegmentCache {
     await db.put(AUDIO_STORE, record);
   }
 
+  async putAudioSegment(entry: {
+    key?: string;
+    videoId: string;
+    language: string;
+    voiceId: string;
+    segmentId: string;
+    audioBlob: Blob;
+    byteSize?: number;
+  }): Promise<void> {
+    return this.saveAudioSegment(entry);
+  }
+
+
   async getAudioSegment(
     videoId: string,
     language: string,
@@ -252,9 +266,15 @@ export class SegmentCache {
     const transcriptBytes = transcripts.reduce((sum, r) => sum + r.byteSize, 0);
     const audioBytes = audioSegments.reduce((sum, r) => sum + r.byteSize, 0);
 
+    const videoIds = new Set<string>([
+      ...transcripts.map((r) => r.videoId),
+      ...audioSegments.map((r) => r.videoId),
+    ]);
+
     return {
       transcriptCount: transcripts.length,
       audioSegmentCount: audioSegments.length,
+      videoCount: videoIds.size,
       totalBytes: transcriptBytes + audioBytes,
     };
   }
@@ -271,6 +291,10 @@ export class SegmentCache {
       tx.objectStore(AUDIO_STORE).clear(),
     ]);
     await tx.done;
+  }
+
+  async purgeAll(): Promise<void> {
+    return this.purge();
   }
 
   async purgeVideo(videoId: string): Promise<void> {

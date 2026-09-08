@@ -11,6 +11,8 @@
 
 import type { VoiceProfile } from '../../types/domain';
 import { EdgeTtsError, EdgeTtsErrorCode } from './errors';
+import { WebSpeechFallback } from './web-speech-fallback';
+
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,7 +49,12 @@ export interface EdgeTtsClientOptions {
   webSocketFactory?: (url: string) => WebSocketLike;
   /** Base retry delay in ms (for exponential backoff). Default: 200ms. */
   retryDelayMs?: number;
+  /** Whether to fall back to Web Speech API when retries are exhausted. */
+  enableFallback?: boolean;
+  /** Optional fallback WebSpeechFallback adapter instance. */
+  fallback?: WebSpeechFallback;
 }
+
 
 /**
  * Per-call synthesis options.
@@ -164,11 +171,16 @@ function buildConfigMessage(requestId: string): string {
 export class EdgeTtsClient {
   private readonly wsFactory: (url: string) => WebSocketLike;
   private readonly retryDelayMs: number;
+  private readonly enableFallback: boolean;
+  private readonly fallback?: WebSpeechFallback;
 
   constructor(options: EdgeTtsClientOptions = {}) {
     this.wsFactory = options.webSocketFactory ?? ((url) => new WebSocket(url));
     this.retryDelayMs = options.retryDelayMs ?? 200;
+    this.enableFallback = options.enableFallback ?? false;
+    this.fallback = options.fallback;
   }
+
 
   /**
    * Format SSML markup for the given text and voice profile.
@@ -245,11 +257,20 @@ export class EdgeTtsClient {
       }
     }
 
+    if (this.enableFallback) {
+      const fallback = this.fallback ?? new WebSpeechFallback();
+      if (fallback.isSupported()) {
+        await fallback.speak(text, voice);
+        return new Blob(['web-speech-audio'], { type: 'audio/mpeg' });
+      }
+    }
+
     throw new EdgeTtsError(
       EdgeTtsErrorCode.MAX_RETRIES_EXCEEDED,
       `Edge TTS synthesis failed after ${MAX_RETRIES} retries. Last error: ${lastError?.message ?? 'unknown'}`
     );
   }
+
 
   /**
    * Single synthesis attempt over one WebSocket connection.

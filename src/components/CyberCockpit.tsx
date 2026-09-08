@@ -71,7 +71,9 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
       className={`cyber-cockpit ${isOpen ? 'open' : ''}`}
       role="dialog"
       aria-label="Neural Audio HUD"
+      aria-hidden={!isOpen}
     >
+
       {/* Header */}
       <div className="cockpit-header">
         <div className="cockpit-title-wrap">

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { FloatingPill } from './FloatingPill';
 import { CyberCockpit } from './CyberCockpit';
 import { SubtitleOverlay } from './SubtitleOverlay';
+import { NotificationBanner } from './NotificationBanner';
+
 import type { DubbingOrchestrator, Segment, VoiceProfile } from '../types/domain';
 import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from '../core/tts/voices';
 
@@ -24,7 +26,13 @@ export interface HudContainerProps {
   isPlaying?: boolean;
   isDucked?: boolean;
   showOriginalText?: boolean;
+
+  // Caption resilience flags
+  hasCaptions?: boolean;
+  isNoCaptions?: boolean;
+  onConfigureSettings?: () => void;
 }
+
 
 export const HudContainer: React.FC<HudContainerProps> = ({
   orchestrator,
@@ -43,6 +51,9 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   isPlaying: controlledIsPlaying,
   isDucked: controlledIsDucked,
   showOriginalText = true,
+  hasCaptions,
+  isNoCaptions,
+  onConfigureSettings,
 }) => {
   const [isOpenState, setIsOpenState] = useState(initialIsOpen);
   const [isEnabledState, setIsEnabledState] = useState(initialIsEnabled);
@@ -52,6 +63,17 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const [activeSegmentState, setActiveSegmentState] = useState<Segment | null>(initialActiveSegment);
   const [isPlayingState, setIsPlayingState] = useState(false);
   const [isDuckedState, setIsDuckedState] = useState(false);
+  const [isBannerDismissed, setIsBannerDismissed] = useState(false);
+
+  const captionsAvailable =
+    hasCaptions !== undefined ? hasCaptions : isNoCaptions !== undefined ? !isNoCaptions : true;
+
+  useEffect(() => {
+    if (captionsAvailable) {
+      setIsBannerDismissed(false);
+    }
+  }, [captionsAvailable]);
+
 
   // Sync with orchestrator if available
   useEffect(() => {
@@ -138,7 +160,14 @@ export const HudContainer: React.FC<HudContainerProps> = ({
 
   return (
     <div className="hud-wrapper">
+      {!captionsAvailable && !isBannerDismissed && (
+        <NotificationBanner
+          onConfigureSettings={onConfigureSettings}
+          onDismiss={() => setIsBannerDismissed(true)}
+        />
+      )}
       <FloatingPill isOpen={isOpen} onToggle={handleToggle} />
+
       <CyberCockpit
         isOpen={isOpen}
         onClose={handleClose}
