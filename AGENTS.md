@@ -19,4 +19,16 @@ Single-context layout with `CONTEXT.md` and `docs/adr/` at the repository root. 
 Persistent cross-session memory is stored in `.agents/memory/`. At session start, check `.agents/memory/MEMORY.md` to load user preferences, project conventions, and past decisions. See `.agents/skills/memory-system/SKILL.md`.
 To save new persistent memories, follow the `/remember` workflow defined at `.agents/workflows/remember.md`.
 
+## Implement Workflow Configuration
+
+| Phase / Role | Harness / Agent | Responsibility |
+| :--- | :--- | :--- |
+| **coder** | `antigravity` | TDD implementation at public seams |
+| **reviewer** | `opencode` | Independent audit (Standards, Spec, Security & Perf) |
+
+### Verification Gates
+- **Typecheck**: `npm run typecheck`
+- **Test Suite**: `npm test`
+
+
 
