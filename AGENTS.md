@@ -23,39 +23,63 @@ To save new persistent memories, follow the `/remember` workflow defined at `.ag
 
 | Phase / Role | Harness / Agent | Model / Execution | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **coder** | `antigravity` | In-Session / Native | TDD implementation at public seams |
-| **reviewer** | `opencode` | `opencode/muse-spark-1.3-contributor-free` | Independent audit (Standards, Spec, Security & Perf) |
+| **coder** | `opencode` (hoặc `antigravity`) | `opencode/muse-spark-1.3-contributor-free` (hoặc `agy`) via Orca Terminal | TDD implementation at public seams |
+| **reviewer** | `opencode` | `opencode/muse-spark-1.3-contributor-free` via Orca Terminal | Independent audit (Standards, Spec, Security & Perf) |
 
 ### Verification Gates
 - **Typecheck**: `npm run typecheck`
 - **Test Suite**: `npm test`
 
-### OpenCode Reviewer Configuration
-- **Model**: Must use `opencode/muse-spark-1.3-contributor-free` (free Zen model).
-- **Authentication**: No login or API keys required (no `auth.json` needed).
-- **Invocation**: Pass `-m opencode/muse-spark-1.3-contributor-free` when starting opencode.
+### OpenCode Configuration (Free Zen Model)
+- **Model**: `opencode/muse-spark-1.3-contributor-free` (hoạt động miễn phí, không cần đăng nhập/API key).
+- **Invocation**: Khởi chạy với cờ `-m opencode/muse-spark-1.3-contributor-free`.
 
 ### Orca Orchestration Protocol (Windows)
-When orchestrating multi-agent tasks on Windows via Orca:
-1. **Coder Execution**:
-   - `antigravity` executes TDD steps directly in-session (Red -> Green -> Refactor) to avoid nested readiness probe timeouts.
-2. **Reviewer Dispatch via Orca Terminal**:
-   - To avoid Windows PTY / hook timeouts with `orca orchestration worker-start`, use Orca terminal commands:
+Quy trình điều phối đa tác nhân độc lập qua Orca Terminal trên Windows:
+
+1. **Coder Dispatch via Orca Terminal**:
+   - Orchestrator chuẩn bị prompt TDD (Red -> Green -> Refactor) tại `.scratch/coder-prompt.md`.
+   - Tạo terminal mới cho Coder worker:
      ```bash
-     # 1. Create interactive terminal with OpenCode and free model
      orca terminal create --command "opencode -m opencode/muse-spark-1.3-contributor-free"
-     
-     # 2. Dispatch prompt & inspect diff
-     orca terminal send --terminal <terminal_id> --text "<review instructions>" --enter
-     
-     # 3. Read output to check verdict
-     orca terminal read --terminal <terminal_id>
-     
-     # 4. Clean up terminal upon completion
-     orca terminal close --terminal <terminal_id>
+     # hoặc nếu dùng agy: orca terminal create --command "agy --dangerously-skip-permissions"
      ```
-3. **Review Verdict Contract**:
-   The independent reviewer must output one of:
+   - Gửi chỉ dẫn TDD cho Coder:
+     ```bash
+     orca terminal send --terminal <coder_terminal_id> --text "<chỉ_dẫn_tdd_hoặc_đọc_.scratch/coder-prompt.md>" --enter
+     ```
+   - Theo dõi tiến độ Coder bằng `orca terminal read --terminal <coder_terminal_id>` cho đến khi test và typecheck hoàn tất.
+   - Đóng terminal Coder:
+     ```bash
+     orca terminal close --terminal <coder_terminal_id>
+     ```
+
+2. **Deterministic Gatekeeper (Orchestrator)**:
+   - Orchestrator độc lập chạy verification gates trên workspace:
+     ```bash
+     npm run typecheck
+     npm test
+     ```
+   - Nếu gates PASS, tiến hành dispatch Reviewer. Nếu FAIL, gửi fix brief cho Coder.
+
+3. **Reviewer Dispatch via Orca Terminal**:
+   - Tạo terminal mới riêng biệt cho Reviewer worker:
+     ```bash
+     orca terminal create --command "opencode -m opencode/muse-spark-1.3-contributor-free"
+     ```
+   - Gửi yêu cầu review diff và audit:
+     ```bash
+     orca terminal send --terminal <reviewer_terminal_id> --text "<review instructions>" --enter
+     ```
+   - Đọc kết quả verdict qua `orca terminal read --terminal <reviewer_terminal_id>`.
+   - Đóng terminal Reviewer:
+     ```bash
+     orca terminal close --terminal <reviewer_terminal_id>
+     ```
+
+4. **Review Verdict Contract**:
+   Reviewer độc lập bắt buộc trả về một trong các verdict:
    - `## REVIEW VERDICT: PASS`
    - `## REVIEW VERDICT: CHANGES_REQUESTED`
    - `## REVIEW VERDICT: STUCK`
+
