@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mountHud } from '@/entrypoints/content/mount';
 import { tryMount, resetActiveInstanceForTesting } from '@/entrypoints/content/index';
 import { act } from 'react';
 import { fireEvent } from '@testing-library/react';
+import type { DubbingOrchestrator } from '@/types/domain';
 
 describe('Shadow DOM In-Player HUD Mount Seam', () => {
   let playerContainer: HTMLElement;
@@ -156,6 +157,105 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
 
     await act(async () => {
       resetActiveInstanceForTesting();
+    });
+  });
+
+  it('integrates Cyber Cockpit interactions and SubtitleOverlay with DubbingOrchestrator in Shadow DOM', async () => {
+    const mockOrchestrator: DubbingOrchestrator = {
+      init: vi.fn().mockResolvedValue(undefined),
+      handleTimeUpdate: vi.fn(),
+      handleSeek: vi.fn(),
+      handleRateChange: vi.fn(),
+      handlePlay: vi.fn(),
+      handlePause: vi.fn(),
+      setTargetLanguage: vi.fn().mockResolvedValue(undefined),
+      setVoiceProfile: vi.fn(),
+      setDuckLevel: vi.fn(),
+      getActiveSegment: vi.fn().mockReturnValue({
+        id: 'seg-test',
+        startTime: 0,
+        endTime: 3,
+        duration: 3,
+        sourceText: 'Hello world',
+        translatedText: 'Xin chào thế giới',
+      }),
+      isDucked: vi.fn().mockReturnValue(true),
+      getState: vi.fn().mockReturnValue({
+        status: 'playing',
+        targetLanguage: 'vi',
+        playbackRate: 1.0,
+        activeSegmentId: 'seg-test',
+      }),
+      destroy: vi.fn(),
+    };
+
+    let instance: ReturnType<typeof mountHud> = null as any;
+    await act(async () => {
+      instance = mountHud(playerContainer, mockOrchestrator);
+    });
+
+    const shadowRoot = instance.shadowRoot;
+
+    // SubtitleOverlay should be visible in Shadow DOM with translated text
+    const subtitlePill = shadowRoot.querySelector('.subtitle-pill');
+    expect(subtitlePill).not.toBeNull();
+    expect(subtitlePill?.textContent).toContain('Xin chào thế giới');
+    expect(subtitlePill?.textContent).toContain('Hello world');
+
+    // Open Cockpit
+    const triggerPill = shadowRoot.querySelector('.hyper-pill-trigger') as HTMLElement;
+    await act(async () => {
+      fireEvent.click(triggerPill);
+    });
+
+    const cockpit = shadowRoot.querySelector('.cyber-cockpit') as HTMLElement;
+    expect(cockpit.classList.contains('open')).toBe(true);
+
+    // Language Selector
+    const langSelect = shadowRoot.querySelector('.cyber-select') as HTMLSelectElement;
+    expect(langSelect).not.toBeNull();
+    await act(async () => {
+      fireEvent.change(langSelect, { target: { value: 'en' } });
+    });
+    expect(mockOrchestrator.setTargetLanguage).toHaveBeenCalledWith('en');
+
+    // Voice Matrix Selection
+    const namMinhCard = Array.from(shadowRoot.querySelectorAll('.voice-card')).find((card) =>
+      card.textContent?.includes('NAM MINH')
+    ) as HTMLElement;
+    expect(namMinhCard).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(namMinhCard);
+    });
+    expect(mockOrchestrator.setVoiceProfile).toHaveBeenCalled();
+
+    // Ducking Slider
+    const duckSlider = shadowRoot.querySelector('.cyber-slider') as HTMLInputElement;
+    expect(duckSlider).not.toBeNull();
+    await act(async () => {
+      fireEvent.change(duckSlider, { target: { value: '40' } });
+    });
+    expect(mockOrchestrator.setDuckLevel).toHaveBeenCalledWith(0.4);
+
+    // Toggle On/Off Switch -> should pause dubbing and hide subtitles
+    const toggleSwitch = shadowRoot.querySelector('.cyber-toggle-switch') as HTMLElement;
+    expect(toggleSwitch).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(toggleSwitch);
+    });
+    expect(mockOrchestrator.handlePause).toHaveBeenCalled();
+
+    // SubtitleOverlay should now be hidden because visible=false
+    expect(shadowRoot.querySelector('.subtitle-pill')).toBeNull();
+
+    // Toggle On/Off Switch back ON -> resumes dubbing
+    await act(async () => {
+      fireEvent.click(toggleSwitch);
+    });
+    expect(mockOrchestrator.handlePlay).toHaveBeenCalled();
+
+    await act(async () => {
+      instance.unmount();
     });
   });
 });

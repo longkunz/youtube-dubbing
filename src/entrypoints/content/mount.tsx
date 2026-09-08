@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { HudContainer } from '@/components/HudContainer';
 import { HUD_STYLES } from '@/styles/hud.styles';
+import type { DubbingOrchestrator } from '@/types/domain';
 
 export interface HudInstance {
   unmount: () => void;
@@ -9,7 +10,7 @@ export interface HudInstance {
   shadowRoot: ShadowRoot;
 }
 
-export function mountHud(container: HTMLElement): HudInstance {
+export function mountHud(container: HTMLElement, orchestrator?: DubbingOrchestrator): HudInstance {
   // Check if an existing host is already attached
   const existingHost = container.querySelector('[data-aetherdub-host]') as HTMLElement | null;
   if (existingHost) {
@@ -42,7 +43,7 @@ export function mountHud(container: HTMLElement): HudInstance {
   shadowRoot.appendChild(mountPoint);
 
   let root: Root | null = createRoot(mountPoint);
-  root.render(<HudContainer />);
+  root.render(<HudContainer orchestrator={orchestrator} />);
 
   // Mount at start of container
   if (container.firstChild) {

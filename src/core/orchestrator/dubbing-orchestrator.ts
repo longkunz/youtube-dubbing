@@ -23,6 +23,7 @@ import type {
   OrchestratorStatus,
   Segment,
   Transcript,
+  VoiceProfile,
 } from '../../types/domain';
 import { AudioDucker } from '../player/audio-ducker';
 import { TimeStretcher } from '../player/time-stretcher';
@@ -41,6 +42,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private _targetLanguage: string = 'vi';
   private _playbackRate: number = 1.0;
   private _activeSegmentId: string | null = null;
+  private _voiceProfile: VoiceProfile | string | null = null;
   private duckLevel: number = 0.2;
 
   constructor(media: HTMLMediaElement) {
@@ -153,6 +155,27 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
 
   async setTargetLanguage(languageCode: string): Promise<void> {
     this._targetLanguage = languageCode;
+  }
+
+  setVoiceProfile(profile: VoiceProfile | string): void {
+    this._voiceProfile = profile;
+  }
+
+  setDuckLevel(duckLevel: number): void {
+    this.duckLevel = duckLevel;
+    this.ducker.destroy();
+    this.ducker = new AudioDucker(this.media, {
+      duckLevel: this.duckLevel,
+    });
+  }
+
+  getActiveSegment(): Segment | null {
+    if (!this._activeSegmentId || !this.transcript) return null;
+    return this.transcript.segments.find((seg) => seg.id === this._activeSegmentId) ?? null;
+  }
+
+  isDucked(): boolean {
+    return this.ducker.isDucked;
   }
 
   getState(): OrchestratorState {

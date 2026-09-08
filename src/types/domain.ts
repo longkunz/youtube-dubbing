@@ -110,6 +110,11 @@ export interface DubbingOrchestrator {
   handlePlay(): void;
   handlePause(): void;
   setTargetLanguage(languageCode: string): Promise<void>;
+  setVoiceProfile?(profile: VoiceProfile | string): void;
+  setDuckLevel?(duckLevel: number): void;
+  getActiveSegment?(): Segment | null;
+  isDucked?(): boolean;
   getState(): OrchestratorState;
   destroy(): void;
 }
+
