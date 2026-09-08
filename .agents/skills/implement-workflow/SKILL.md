@@ -139,17 +139,27 @@ An autonomous engineering protocol that orchestrates two dedicated AI agent sess
 
 2. **Launch Worker via Orca**:
    Launch with the agent resolved from `AGENTS.md` (consult `references/harness-matrix.md` for agent ID and permission defaults):
-   ```bash
-   orca orchestration worker-start --task <taskId> --worktree current \
-     --agent <coderAgent> --json
-   ```
+   - **Case A: Active Session In-Place Execution (Recommended when Coder is `antigravity`)**:
+     If the current orchestrator session is already Antigravity and `antigravity` is designated as Coder, execute the vertical-slice TDD implementation directly in-session (write failing test at seam -> implement minimal code -> verify green & typecheck), then proceed directly to Phase 3/4.
+   - **Case B: Orca Worker Dispatch**:
+     ```bash
+     orca orchestration worker-start --task <taskId> --worktree current \
+       --agent <coderAgent> [--model <modelId>] --json
+     ```
+     *Note for OpenCode*: OpenCode includes free Zen models (use `--model opencode/muse-spark-1.3-contributor-free`), zero external login required.
+   - **Case C: Interactive Terminal Fallback (Windows)**:
+     If `worker-start` encounters readiness or timing issues on Windows cmd:
+     ```bash
+     orca terminal create --worktree active --title "CODER WORKER" --command "<coderAgent> [flags]"
+     orca terminal send --terminal <handle> --text "<prompt-text-or-reference>" --enter
+     ```
 
 3. **Await Coder Completion**:
    ```bash
    orca orchestration check --wait --types "worker_done,escalation,question" --timeout-ms 900000 --json
    orca orchestration check --ack <deliveryId> --json
    ```
-   *Note*: If the worker hangs or exceeds timeout without reporting, fence and terminate it via `orca orchestration worker-stop --dispatch <coderDispatchId> --json` before escalating.
+   *Note*: If the worker hangs or exceeds timeout without reporting, fence and terminate it via `orca orchestration worker-stop --dispatch <coderDispatchId> --json` before escalating. (Or inspect terminal via `orca terminal read --terminal <handle> --limit 50 --json`).
 
 ---
 
@@ -185,16 +195,33 @@ Before spending tokens to dispatch the Reviewer:
 
 2. **Launch Fresh Reviewer via Orca**:
    Launch in a fresh session with the agent resolved from `AGENTS.md` (consult `references/harness-matrix.md` for agent ID and permission defaults):
-   ```bash
-   orca orchestration worker-start --task <taskId> --worktree current \
-     --agent <reviewerAgent> --json
-   ```
+   - **Option A: Orca Worker Dispatch**:
+     ```bash
+     orca orchestration worker-start --task <taskId> --worktree current \
+       --agent <reviewerAgent> [--model <modelId>] --json
+     ```
+     *Note for OpenCode*: Pass `--model opencode/muse-spark-1.3-contributor-free` to use the built-in free model without credentials.
+   - **Option B: Direct Interactive Terminal Dispatch (Rock-Solid Fallback)**:
+     ```bash
+     orca terminal create --worktree active --title "REVIEWER (<reviewerAgent>)" --command "opencode -m opencode/muse-spark-1.3-contributor-free" --json
+     orca terminal send --terminal <handle> --text "Audit staged git diff for Issue #<id>. Read .scratch/reviewer-prompt.md for instructions and output your review verdict (PASS, CHANGES_REQUESTED, or STUCK)." --enter --json
+     ```
 
 3. **Await Reviewer Verdict**:
-   ```bash
-   orca orchestration check --wait --types "worker_done,escalation,question" --timeout-ms 900000 --json
-   orca orchestration check --ack <deliveryId> --json
-   ```
+   - For Orca worker dispatch:
+     ```bash
+     orca orchestration check --wait --types "worker_done,escalation,question" --timeout-ms 900000 --json
+     orca orchestration check --ack <deliveryId> --json
+     ```
+   - For interactive terminal dispatch: Monitor terminal output using:
+     ```bash
+     orca terminal read --terminal <handle> --limit 50 --json
+     ```
+     Once OpenCode outputs `## REVIEW VERDICT: [PASS | CHANGES_REQUESTED | STUCK]`, capture the verdict and close the terminal:
+     ```bash
+     orca terminal close --terminal <handle> --json
+     ```
+
 
 ---
 
