@@ -30,6 +30,18 @@ import { TimeStretcher } from '../player/time-stretcher';
 import { PlaybackSyncEngine } from '../player/sync-engine';
 import { SlidingWindow } from './sliding-window';
 
+export interface DubbingTtsClient {
+  synthesize(text: string, options?: { voice?: string; rate?: string; pitch?: string }): Promise<Blob>;
+}
+
+export interface DubbingOrchestratorDeps {
+  ttsClient?: DubbingTtsClient;
+  defaultVoice?: string;
+  femaleVoice?: string;
+  maleVoice?: string;
+  diarizationEnabled?: boolean;
+}
+
 export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private readonly media: HTMLMediaElement;
   private ducker: AudioDucker;
@@ -45,8 +57,19 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private _voiceProfile: VoiceProfile | string | null = null;
   private duckLevel: number = 0.2;
 
-  constructor(media: HTMLMediaElement) {
+  private readonly ttsClient?: DubbingTtsClient;
+  private defaultVoice: string;
+  private femaleVoice: string;
+  private maleVoice: string;
+  private diarizationEnabled: boolean;
+
+  constructor(media: HTMLMediaElement, deps?: DubbingOrchestratorDeps) {
     this.media = media;
+    this.ttsClient = deps?.ttsClient;
+    this.defaultVoice = deps?.defaultVoice ?? 'vi-VN-HoaiMyNeural';
+    this.femaleVoice = deps?.femaleVoice ?? 'vi-VN-HoaiMyNeural';
+    this.maleVoice = deps?.maleVoice ?? 'vi-VN-NamMinhNeural';
+    this.diarizationEnabled = deps?.diarizationEnabled ?? false;
     this.ducker = new AudioDucker(media);
     this.stretcher = new TimeStretcher();
     this.syncEngine = new PlaybackSyncEngine();
@@ -71,6 +94,18 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     this.transcript = transcript;
     this._targetLanguage = config.targetLanguage;
     this.duckLevel = config.duckLevel ?? 0.2;
+    if (config.diarizationEnabled !== undefined) {
+      this.diarizationEnabled = config.diarizationEnabled;
+    }
+    if (config.defaultVoice) {
+      this.defaultVoice = config.defaultVoice;
+    }
+    if (config.femaleVoice) {
+      this.femaleVoice = config.femaleVoice;
+    }
+    if (config.maleVoice) {
+      this.maleVoice = config.maleVoice;
+    }
     const lookahead = config.lookaheadSeconds ?? 60;
     this.slidingWindow = new SlidingWindow(lookahead);
 
@@ -116,6 +151,19 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       );
       for (const seg of toSynthesize) {
         this.slidingWindow.markSynthesized(seg.id);
+        if (this.ttsClient && !seg.audioBlob) {
+          const voice = this.resolveVoiceForSegment(seg);
+          seg.voiceProfileId = voice;
+          const text = seg.translatedText ?? seg.sourceText;
+          this.ttsClient
+            .synthesize(text, { voice })
+            .then((blob) => {
+              seg.audioBlob = blob;
+            })
+            .catch(() => {
+              // Ignore synthesis errors during lookahead
+            });
+        }
       }
     }
   }
@@ -178,12 +226,54 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     return this.ducker.isDucked;
   }
 
+  setDiarizationEnabled(enabled: boolean): void {
+    this.diarizationEnabled = enabled;
+  }
+
+  isDiarizationEnabled(): boolean {
+    return this.diarizationEnabled;
+  }
+
+  private get currentVoice(): string {
+    if (typeof this._voiceProfile === 'string') return this._voiceProfile;
+    if (this._voiceProfile?.voiceKey) return this._voiceProfile.voiceKey;
+    if (this._voiceProfile?.id) return this._voiceProfile.id;
+    return this.defaultVoice;
+  }
+
+  resolveVoiceForSegment(segment?: Partial<Segment> | null): string {
+    if (this.diarizationEnabled && segment) {
+      if (segment.speakerGender === 'female') {
+        return this.femaleVoice;
+      }
+      if (segment.speakerGender === 'male') {
+        return this.maleVoice;
+      }
+    }
+    return this.currentVoice;
+  }
+
+  async synthesizeSegment(segment: Segment): Promise<Blob | undefined> {
+    const voice = this.resolveVoiceForSegment(segment);
+    segment.voiceProfileId = voice;
+    if (this.ttsClient) {
+      const text = segment.translatedText ?? segment.sourceText;
+      const blob = await this.ttsClient.synthesize(text, { voice });
+      segment.audioBlob = blob;
+      return blob;
+    }
+    return undefined;
+  }
+
   getState(): OrchestratorState {
+    const activeSegment = this.getActiveSegment();
     return {
       status: this.status,
       targetLanguage: this._targetLanguage,
       playbackRate: this._playbackRate,
       activeSegmentId: this._activeSegmentId,
+      diarizationEnabled: this.diarizationEnabled,
+      activeVoiceId: activeSegment?.voiceProfileId ?? this.resolveVoiceForSegment(activeSegment ?? {}),
     };
   }
 

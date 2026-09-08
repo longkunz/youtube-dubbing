@@ -18,6 +18,8 @@ export interface CyberCockpitProps {
   onClose: () => void;
   isEnabled?: boolean;
   onToggleEnabled?: (enabled: boolean) => void;
+  isMultiSpeakerEnabled?: boolean;
+  onToggleMultiSpeaker?: (enabled: boolean) => void;
   targetLanguage?: string;
   onSelectLanguage?: (languageCode: string) => void;
   selectedVoiceId?: string;
@@ -33,6 +35,8 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   onClose,
   isEnabled = true,
   onToggleEnabled,
+  isMultiSpeakerEnabled = false,
+  onToggleMultiSpeaker,
   targetLanguage = 'vi',
   onSelectLanguage,
   selectedVoiceId,
@@ -43,7 +47,15 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   isDucked = false,
 }) => {
   const [internalVoice, setInternalVoice] = useState('vi-VN-HoaiMyNeural');
+  const [internalMultiSpeaker, setInternalMultiSpeaker] = useState(isMultiSpeakerEnabled);
   const activeVoice = selectedVoiceId ?? internalVoice;
+  const isMultiSpeaker = isMultiSpeakerEnabled !== undefined ? isMultiSpeakerEnabled : internalMultiSpeaker;
+
+  const handleToggleMultiSpeaker = () => {
+    const next = !isMultiSpeaker;
+    setInternalMultiSpeaker(next);
+    onToggleMultiSpeaker?.(next);
+  };
 
   const normalizedLang = TARGET_LANGUAGES.find(
     (l) => l.code === targetLanguage || l.label === targetLanguage
@@ -129,6 +141,22 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
           >
             <span className="toggle-slider" />
             <span className="toggle-text">{isEnabled ? 'DUB: ON' : 'DUB: OFF'}</span>
+          </button>
+        </div>
+
+        <div className="cyber-toggle-wrapper">
+          <span className="control-label">Multi-Speaker Diarization</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isMultiSpeaker}
+            aria-label="Toggle Multi-Speaker Diarization Scanner"
+            data-testid="multi-speaker-toggle"
+            className={`cyber-toggle-switch ${isMultiSpeaker ? 'active' : ''}`}
+            onClick={handleToggleMultiSpeaker}
+          >
+            <span className="toggle-slider" />
+            <span className="toggle-text">{isMultiSpeaker ? 'SCANNER: AUTO' : 'SCANNER: OFF'}</span>
           </button>
         </div>
       </div>

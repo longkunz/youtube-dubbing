@@ -15,6 +15,7 @@ export interface HudContainerProps {
   initialVoiceId?: string;
   initialDuckLevel?: number;
   initialActiveSegment?: Segment | null;
+  initialIsMultiSpeakerEnabled?: boolean;
 
   // Direct overrides (for testing or declarative use)
   isOpen?: boolean;
@@ -26,6 +27,8 @@ export interface HudContainerProps {
   isPlaying?: boolean;
   isDucked?: boolean;
   showOriginalText?: boolean;
+  isMultiSpeakerEnabled?: boolean;
+  onToggleMultiSpeaker?: (enabled: boolean) => void;
 
   // Caption resilience flags
   hasCaptions?: boolean;
@@ -42,6 +45,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   initialVoiceId = 'vi-VN-HoaiMyNeural',
   initialDuckLevel = 0.2,
   initialActiveSegment = null,
+  initialIsMultiSpeakerEnabled = false,
   isOpen: controlledIsOpen,
   isEnabled: controlledIsEnabled,
   targetLanguage: controlledTargetLanguage,
@@ -51,6 +55,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   isPlaying: controlledIsPlaying,
   isDucked: controlledIsDucked,
   showOriginalText = true,
+  isMultiSpeakerEnabled: controlledIsMultiSpeaker,
+  onToggleMultiSpeaker,
   hasCaptions,
   isNoCaptions,
   onConfigureSettings,
@@ -64,6 +70,9 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const [isPlayingState, setIsPlayingState] = useState(false);
   const [isDuckedState, setIsDuckedState] = useState(false);
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
+  const [isMultiSpeakerState, setIsMultiSpeakerState] = useState(
+    initialIsMultiSpeakerEnabled ?? orchestrator?.isDiarizationEnabled?.() ?? false
+  );
 
   const captionsAvailable =
     hasCaptions !== undefined ? hasCaptions : isNoCaptions !== undefined ? !isNoCaptions : true;
@@ -88,6 +97,9 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         if (orchestrator.getActiveSegment) {
           const seg = orchestrator.getActiveSegment();
           setActiveSegmentState(seg);
+        }
+        if (orchestrator.isDiarizationEnabled) {
+          setIsMultiSpeakerState(orchestrator.isDiarizationEnabled());
         }
         if (orchestrator.isDucked) {
           setIsDuckedState(orchestrator.isDucked());
@@ -115,6 +127,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const activeSegment = controlledActiveSegment !== undefined ? controlledActiveSegment : activeSegmentState;
   const isPlaying = controlledIsPlaying !== undefined ? controlledIsPlaying : isPlayingState;
   const isDucked = controlledIsDucked !== undefined ? controlledIsDucked : isDuckedState;
+  const isMultiSpeaker = controlledIsMultiSpeaker !== undefined ? controlledIsMultiSpeaker : isMultiSpeakerState;
 
   const handleToggle = () => {
     setIsOpenState((prev) => !prev);
@@ -133,6 +146,14 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         orchestrator.handlePlay();
       }
     }
+  };
+
+  const handleToggleMultiSpeaker = (enabled: boolean) => {
+    setIsMultiSpeakerState(enabled);
+    if (orchestrator?.setDiarizationEnabled) {
+      orchestrator.setDiarizationEnabled(enabled);
+    }
+    onToggleMultiSpeaker?.(enabled);
   };
 
   const handleSelectLanguage = (languageCode: string) => {
@@ -173,6 +194,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         onClose={handleClose}
         isEnabled={isEnabled}
         onToggleEnabled={handleToggleEnabled}
+        isMultiSpeakerEnabled={isMultiSpeaker}
+        onToggleMultiSpeaker={handleToggleMultiSpeaker}
         targetLanguage={targetLanguage}
         onSelectLanguage={handleSelectLanguage}
         selectedVoiceId={selectedVoiceId}

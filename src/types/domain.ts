@@ -74,6 +74,14 @@ export interface OrchestratorConfig {
   lookaheadSeconds?: number;
   /** Volume fraction to duck to during speech (0–1). Default: 0.2. */
   duckLevel?: number;
+  /** Whether automatic multi-speaker diarization is enabled. Default: false. */
+  diarizationEnabled?: boolean;
+  /** Default fallback voice profile id. */
+  defaultVoice?: string;
+  /** Voice profile id to use for female speakers. */
+  femaleVoice?: string;
+  /** Voice profile id to use for male speakers. */
+  maleVoice?: string;
 }
 
 /**
@@ -97,6 +105,10 @@ export interface OrchestratorState {
   playbackRate: number;
   /** Currently active segment id, if any. */
   activeSegmentId: string | null;
+  /** Whether multi-speaker diarization is active. */
+  diarizationEnabled?: boolean;
+  /** Currently resolved/active voice id for the active segment or system. */
+  activeVoiceId?: string;
 }
 
 /**
@@ -114,6 +126,8 @@ export interface DubbingOrchestrator {
   setDuckLevel?(duckLevel: number): void;
   getActiveSegment?(): Segment | null;
   isDucked?(): boolean;
+  setDiarizationEnabled?(enabled: boolean): void;
+  isDiarizationEnabled?(): boolean;
   getState(): OrchestratorState;
   destroy(): void;
 }

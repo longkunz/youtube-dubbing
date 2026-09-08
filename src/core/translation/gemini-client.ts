@@ -32,6 +32,7 @@ export interface TranslateOptions {
 interface GeminiTranslationItem {
   id: string;
   translatedText: string;
+  speakerGender?: 'female' | 'male' | string;
 }
 
 interface GeminiTranslationPayload {
@@ -71,15 +72,16 @@ function buildPrompt(segments: Segment[], targetLanguage: string): string {
     .map((s) => `{ "id": ${JSON.stringify(s.id)}, "sourceText": ${JSON.stringify(s.sourceText)} }`)
     .join(',\n  ');
 
-  return `You are a professional translator. Translate the following dialogue segments into ${targetLanguage}.
+  return `You are a professional translator and dialogue analyst. Translate the following dialogue segments into ${targetLanguage} and perform speaker diarization.
 
 Rules:
 - Translate naturally and conversationally.
 - Preserve technical terminology, proper nouns, and brand names.
 - Keep consistent pronouns throughout.
+- Infer speaker gender ('female' or 'male') for each segment from conversational context, tone, and pronouns. Tag each segment with "speakerGender": "female" | "male".
 - Preserve the segment "id" field exactly as given.
 - Return ONLY a valid JSON object with this exact shape:
-  { "translations": [ { "id": "<id>", "translatedText": "<translation>" }, ... ] }
+  { "translations": [ { "id": "<id>", "translatedText": "<translation>", "speakerGender": "female" | "male" }, ... ] }
 - Do NOT include markdown fences, explanations, or any extra text.
 
 Segments to translate:
@@ -156,14 +158,27 @@ export class GeminiTranslationClient {
     const payload = this.parseGeminiResponse(rawText);
 
     // Map by segment id for O(1) lookup
-    const translationMap = new Map<string, string>(
-      payload.translations.map((t) => [t.id, t.translatedText]),
+    const resultMap = new Map<string, GeminiTranslationItem>(
+      payload.translations.map((t) => [t.id, t]),
     );
 
     return segments.map((seg) => {
-      const translation = translationMap.get(seg.id);
-      if (translation === undefined) return { ...seg };
-      return { ...seg, translatedText: translation };
+      const item = resultMap.get(seg.id);
+      if (!item) return { ...seg };
+
+      let speakerGender = seg.speakerGender;
+      if (item.speakerGender) {
+        const normalized = item.speakerGender.toLowerCase().trim();
+        if (normalized === 'female' || normalized === 'male') {
+          speakerGender = normalized as 'female' | 'male';
+        }
+      }
+
+      return {
+        ...seg,
+        translatedText: item.translatedText,
+        speakerGender,
+      };
     });
   }
 
