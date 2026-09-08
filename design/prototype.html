@@ -967,6 +967,18 @@
                     </label>
                   </div>
 
+                  <!-- Target Language Matrix -->
+                  <div class="section-label">TARGET LANGUAGE</div>
+                  <div style="margin-bottom: 14px;">
+                    <select class="cyber-input" style="width: 100%; padding: 8px 12px; font-size: 12px; background: var(--glass-card); border-color: rgba(0, 242, 254, 0.3);" id="targetLangSelect">
+                      <option value="vi">🇻🇳 Tiếng Việt (Vietnamese - Default)</option>
+                      <option value="en">🇺🇸 English (US)</option>
+                      <option value="ja">🇯🇵 日本語 (Japanese)</option>
+                      <option value="zh">🇨🇳 中文 (Mandarin)</option>
+                      <option value="es">🇪🇸 Español (Spanish)</option>
+                    </select>
+                  </div>
+
                   <!-- Voice Matrix -->
                   <div class="section-label">NEURAL VOICE MATRIX</div>
                   <div class="voice-matrix">
@@ -980,6 +992,18 @@
                       <div class="voice-name">NAM MINH</div>
                       <div class="voice-role">MALE // STUDIO</div>
                     </div>
+                  </div>
+
+                  <!-- Multi-Speaker Diarization Scanner -->
+                  <div style="display:flex; align-items:center; justify-content:space-between; background:var(--glass-card); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 12px; margin-bottom:14px;">
+                    <div>
+                      <div style="font-size:11px; font-weight:700; color:#fff; font-family:'Orbitron',monospace;">MULTI-SPEAKER DIARIZATION</div>
+                      <div style="font-size:10px; color:#94a3b8;">Auto-detect & alternate male/female voices</div>
+                    </div>
+                    <label class="cyber-switch" style="transform:scale(0.85)">
+                      <input type="checkbox" id="diarizationToggle" onchange="console.log('Diarization:', this.checked)">
+                      <span class="cyber-slider"></span>
+                    </label>
                   </div>
 
                   <!-- Dual Laser Ducking Slider -->

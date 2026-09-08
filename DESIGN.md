@@ -23,7 +23,7 @@
 | `--cyber-purple` | `#7928ca` | Secondary atmospheric gradient, card glow accents |
 | `--hyper-magenta` | `#ff007a` | High-energy accent, active state switches, ducking thresholds |
 | `--matrix-emerald` | `#00ff88` | Neural core online, ready status, cache optimal |
-| `--solar-amber` | `#ffb703` | JIT translation stream in-flight, sliding window buffering |
+| `--solar-amber` | `#ffb703` | Sliding-window TTS synthesis in-flight / buffering upcoming segments |
 | `--void-dark` | `#05070e` | Infinite black canvas for deep contrast |
 | `--glass-surface` | `rgba(10, 14, 26, 0.78)` | Frosted glass panel surface with 24px blur |
 | `--glass-card` | `rgba(19, 26, 46, 0.65)` | Inner component cards, selector chips |
@@ -40,7 +40,7 @@
 
 | Hierarchy | Size | Weight | Tracking | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `hud-telemetry` | `11px` | 600 Mono | `+0.12em` | Real-time stats (`ENGINE: GEMINI-2.0 // LATENCY: 110ms`) |
+| `hud-telemetry` | `11px` | 600 Mono | `+0.12em` | Real-time stats (`ENGINE: GEMINI-2.0-FLASH // LATENCY: 110ms`) |
 | `hud-title` | `16px` | 700 Orbitron | `+0.06em` | Floating panel brand header & module titles |
 | `hud-label` | `12px` | 600 Sans | `+0.04em` | Parameter labels, slider readouts, voice names |
 | `hud-caption` | `10px` | 500 Mono | `+0.08em` | Technical metadata, model tags, status badges |
@@ -63,18 +63,19 @@
   1. **Neural Voice Matrix**: Glowing voice cards with holographic soundwave avatars:
      - `VOICE-01 // HOÀI MY` (Neural Soft Female - Cyan Glow)
      - `VOICE-02 // NAM MINH` (Neural Studio Male - Purple Glow)
-  2. **Dual-Rail Audio Ducking Visualizer**:
+  2. **Target Language Selector**: Compact cyber dropdown (default: `Tiếng Việt [vi]`, with options for `English [en]`, `日本語 [ja]`, `中文 [zh]`, `Español [es]`).
+  3. **Dual-Rail Audio Ducking Visualizer**:
      - Interactive laser slider with neon track fill and glowing thumb.
      - Dynamic HUD readouts: `ORIGINAL AUDIO: [20% DUCKED]` vs `AI DUB ENGINE: [100% BOOST]`.
-  3. **Multi-Speaker Diarization Scanner**:
-     - Cyber toggle with animated scanning beam when enabled.
-  4. **Telemetry Footer**:
+  4. **Multi-Speaker Diarization Scanner**:
+     - Cyber toggle with animated scanning beam when enabled (switches between male/female voices according to dialogue context).
+  5. **Telemetry Footer**:
      - Displaying real-time tokens processed, current segment start/end time, and buffer health.
 
 ### 4.3 Subtitle Overlay (Gentle & Minimalist YouTube Native Style)
 - **Rationale**: While controls and telemetry are hyper-futuristic, reading subtitles requires zero eye fatigue and maximum legibility. Therefore, the subtitles on the video surface strictly retain the gentle, clean aesthetic of native YouTube captions.
 - **Styling**:
-  - Background: `rgba(0, 0, 0, 0.8)` soft semi-transparent black pill (`border-radius: 3px`).
+  - Background: `rgba(8, 8, 8, 0.84)` soft semi-transparent black pill (`border-radius: 4px`).
   - Text: `#ffffff` crisp white text, font size `18px - 20px`, font weight `500`, line height `1.4`.
   - Secondary Original Text (optional preview): `rgba(255, 255, 255, 0.75)` at `13px`.
   - **Zero Distraction**: No glowing neon borders, no laser boxes, and no shadows on the text itself, ensuring the video content remains the hero.
@@ -83,8 +84,8 @@
 - **Concept**: A dark sci-fi operations deck for controlling AI credentials, cache data, and sound processing models.
 - **Sections**:
   - **Neural Link Core**: Input fields for Gemini / Groq API Keys styled as encrypted terminal inputs with glowing cursor and validation ping.
-  - **TTS Engine Forge**: Edge TTS vs ElevenLabs selector with pitch, modulation, and timestretch calibration dials.
-  - **Sub-atomic Cache Vault**: Interactive circular progress meter showing IndexedDB storage utilization and one-click "Purge Cache" with a warp-drive wipe animation.
+  - **TTS Engine Forge**: Microsoft Edge Neural TTS is the built-in MVP default (free, high-quality, zero-configuration); secondary BYOK provider selector for ElevenLabs and OpenAI TTS. Pitch, rate modulation, and timestretch calibration dials.
+  - **Sub-atomic Cache Vault**: Interactive circular progress meter showing SegmentCache (IndexedDB) storage utilization and one-click "Purge Cache" with a warp-drive wipe animation.
 
 ---
 

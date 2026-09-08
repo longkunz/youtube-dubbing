@@ -1,0 +1,90 @@
+# YouTube Dubbing (AetherDub)
+
+> **Real-time AI voice dubbing for YouTube with a Hyper Sci-Fi Audio HUD and gentle native captions.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](https://developer.chrome.com/docs/extensions/develop)
+[![Framework: WXT](https://img.shields.io/badge/Framework-WXT-purple.svg)](https://wxt.dev/)
+
+YouTube Dubbing is a 100% client-side Chrome/Web extension that translates and dubs YouTube videos into natural, fluent Vietnamese (and other target languages) in real time. It pairs a high-octane **Hyper Sci-Fi Cockpit HUD** for audio controls with clean, unobtrusive **YouTube-native subtitles** for zero eye fatigue.
+
+---
+
+## ⚡ Key Capabilities
+
+- **100% Client-Side & BYOK (Bring Your Own Key)**: Zero server costs, zero telemetry tracking, and total user privacy. Enter your Google Gemini API key once in the Command Center.
+- **Intelligent Sentence Restructuring**: Merges fragmented YouTube auto-captions (silence gap < 0.4s) into cohesive sentences with preserved timeline boundaries before translation.
+- **Full Upfront Translation (Gemini 2.0 Flash)**: Translates the full video transcript in a single batch pass (<2s latency) ensuring pronouns, tone, and technical terminology remain consistent across the entire video.
+- **Sliding-Window Speech Synthesis**: Pre-synthesizes audio 30–60 seconds ahead using Microsoft Edge Neural TTS (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`) with automatic 3x WebSocket retry and fallback.
+- **Dynamic Audio Ducking & Time-Stretching**: Smoothly attenuates original video volume to ~20% in 150ms during active speech and scales TTS rate (1.0x–1.35x) to maintain perfect synchronization with speaker lip movements.
+- **Zero-CSS-Bleed Shadow DOM Mount**: In-player controls (`NEURAL DUB` trigger pill and the expandable Cyber Cockpit) are isolated within a Shadow DOM container inside `.ytp-right-controls`.
+- **Gentle, Native Subtitles**: Subtitle text overlay retains YouTube's clean, distraction-free aesthetic (`rgba(8, 8, 8, 0.84)` rounded pill with crisp white text).
+- **Persistent Local Cache (`SegmentCache`)**: Stores translated transcripts and synthesized audio blobs in browser IndexedDB for instant 0ms replays with zero repeat API costs.
+
+---
+
+## 🏛️ Architecture & Decisions
+
+The project's architectural decisions are documented as lightweight ADRs:
+
+- [ADR-0001: 100% Client-Side BYOK Architecture](docs/adr/0001-client-side-byok-architecture.md)
+- [ADR-0002: HTMLMediaElement Volume Lerp for Audio Ducking](docs/adr/0002-volume-lerp-for-audio-ducking.md)
+- [ADR-0003: Full Transcript Pre-Translation with Sliding-Window TTS](docs/adr/0003-full-pretranslation-sliding-window-tts.md)
+- [ADR-0004: In-Player Controls via Shadow DOM Injection](docs/adr/0004-shadow-dom-in-player-controls.md)
+- [ADR-0006: Hyper-Fantastic Sci-Fi Audio HUD Design System](docs/adr/0006-hyper-fantastic-hud-design-system.md)
+
+---
+
+## 🎨 Design System & Interactive Prototype
+
+- **Design System**: [`DESIGN.md`](DESIGN.md) defines color tokens, typography scales, HUD geometry, and micro-interaction timings.
+- **Interactive Prototype**: Open [`design/prototype.html`](design/prototype.html) directly in any browser to interact with the simulated YouTube video player, the Cyber Cockpit, volume sliders, and the Command Center.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js >= 20
+- npm, pnpm, or bun
+
+### Setup & Development
+```bash
+# Clone the repository
+git clone https://github.com/longkunz/youtube-dubbing.git
+cd youtube-dubbing
+
+# Install dependencies
+npm install
+
+# Run in development mode with automatic Chrome reload
+npm run dev
+
+# Run unit and integration tests (TDD)
+npm test
+
+# Build production extension package
+npm run build
+```
+
+---
+
+## 📋 Project Tracking
+
+Issues are tracked on GitHub: [GitHub Issues](https://github.com/longkunz/youtube-dubbing/issues)
+
+- [Issue #1: Project Foundation & Shadow DOM In-Player HUD Mount](https://github.com/longkunz/youtube-dubbing/issues/1)
+- [Issue #2: Transcript Extraction & Gap-Based Sentence Restructuring](https://github.com/longkunz/youtube-dubbing/issues/2)
+- [Issue #3: Upfront Translation Pipeline with Gemini Flash](https://github.com/longkunz/youtube-dubbing/issues/3)
+- [Issue #4: Microsoft Edge Neural TTS Streaming via Service Worker](https://github.com/longkunz/youtube-dubbing/issues/4)
+- [Issue #5: Persistent Local Audio & Transcript Cache (IndexedDB)](https://github.com/longkunz/youtube-dubbing/issues/5)
+- [Issue #6: Audio Ducking & Playback Sync Engine](https://github.com/longkunz/youtube-dubbing/issues/6)
+- [Issue #7: Gentle Subtitle Overlay & Full Cyber Cockpit Integration](https://github.com/longkunz/youtube-dubbing/issues/7)
+- [Issue #8: Command Center Options Dashboard & Resilience Fallbacks](https://github.com/longkunz/youtube-dubbing/issues/8)
+- [Issue #9: Multi-Speaker Diarization & Dynamic Voice Switching](https://github.com/longkunz/youtube-dubbing/issues/9)
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
