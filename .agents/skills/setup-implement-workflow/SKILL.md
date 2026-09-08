@@ -51,7 +51,7 @@ Prompt the user to select their desired agent pairing step-by-step:
 
 #### Step B: Configure REVIEWER Role
 1. **Choose Agent**: Present the list of detected agents:
-   > "Bạn chọn Agent nào làm REVIEWER? [1] claude, [2] opencode (hỗ trợ model free Muse Spark 1.3 không cần login), [3] cline, [4] codex, [5] cursor..."
+   > "Bạn chọn Agent nào làm REVIEWER? [1] claude, [2] opencode, [3] cline, [4] codex, [5] cursor..."
 
 #### Step C: Confirm Verification Gates
 Show the detected test and typecheck commands and ask if the user wants to adjust them.
