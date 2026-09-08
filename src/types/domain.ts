@@ -59,3 +59,57 @@ export interface VoiceProfile {
   pitch?: string; // e.g. "+0Hz", "+5Hz" (SSML prosody pitch parameter)
   rate?: string;  // e.g. "+0%", "+10%" (SSML prosody rate parameter)
 }
+
+// ---------------------------------------------------------------------------
+// Orchestrator domain contracts (Issue #6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for the DubbingOrchestrator.
+ */
+export interface OrchestratorConfig {
+  /** BCP-47 language code for the target dubbing language (e.g. "vi"). */
+  targetLanguage: string;
+  /** Seconds ahead of playhead to pre-synthesize TTS audio. Default: 60. */
+  lookaheadSeconds?: number;
+  /** Volume fraction to duck to during speech (0–1). Default: 0.2. */
+  duckLevel?: number;
+}
+
+/**
+ * Runtime status of the DubbingOrchestrator.
+ */
+export type OrchestratorStatus =
+  | 'idle'
+  | 'ready'
+  | 'playing'
+  | 'paused'
+  | 'seeking'
+  | 'destroyed';
+
+/**
+ * Observable state snapshot returned by DubbingOrchestrator.getState().
+ */
+export interface OrchestratorState {
+  status: OrchestratorStatus;
+  targetLanguage: string;
+  /** Current host video playback rate (e.g. 1.0, 1.5, 2.0). */
+  playbackRate: number;
+  /** Currently active segment id, if any. */
+  activeSegmentId: string | null;
+}
+
+/**
+ * Public contract for the DubbingOrchestrator (primary seam from docs/SPEC.md).
+ */
+export interface DubbingOrchestrator {
+  init(videoId: string, transcript: Transcript, config: OrchestratorConfig): Promise<void>;
+  handleTimeUpdate(currentTime: number): void;
+  handleSeek(newTime: number): void;
+  handleRateChange(newRate: number): void;
+  handlePlay(): void;
+  handlePause(): void;
+  setTargetLanguage(languageCode: string): Promise<void>;
+  getState(): OrchestratorState;
+  destroy(): void;
+}
