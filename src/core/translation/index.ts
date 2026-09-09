@@ -10,7 +10,7 @@
 export type { TranslationClient, TranslateOptions, FetchFn } from './types';
 export { GeminiTranslationClient } from './gemini-client';
 export type { GeminiTranslationClientOptions } from './gemini-client';
-export { OpenAiCompatibleTranslationClient, normalizeEndpoint } from './openai-client';
+export { OpenAiCompatibleTranslationClient, normalizeEndpoint, parseSseStream } from './openai-client';
 export type { OpenAiCompatibleClientOptions } from './openai-client';
 export { createTranslationClient } from './factory';
 export { TranslationError, TranslationErrorCode } from './errors';

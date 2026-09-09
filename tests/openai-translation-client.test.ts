@@ -471,4 +471,73 @@ describe('OpenAI non-JSON envelope diagnostics (proxy transparency)', () => {
     const [seg] = await client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' });
     expect(seg.translatedText).toBe('Xin chào');
   });
+
+  it('explicitly includes stream: false in the request body', async () => {
+    const payload = JSON.stringify({
+      translations: [{ id: 's1', translatedText: 'Xin chào' }],
+    });
+    const mockFetch = vi.fn().mockResolvedValue(makeOpenAiSuccessResponse(payload));
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'gpt-4o-mini',
+      apiKey: 'sk-test',
+      fetchFn: mockFetch as any,
+    });
+
+    await client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' });
+
+    const calledInit = mockFetch.mock.calls[0][1];
+    const parsedBody = JSON.parse(calledInit.body);
+    expect(parsedBody.stream).toBe(false);
+  });
+
+  it('handles OpenAI SSE streaming responses (text/event-stream)', async () => {
+    const sseBody = [
+      'data: {"id":"chatcmpl-123","choices":[{"delta":{"role":"assistant","content":""}}]}\n\n',
+      'data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"{\\"translations\\": "}}]}\n\n',
+      'data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"[{\\"id\\": \\"s1\\", \\"translatedText\\": \\"Xin chào thế giới\\", \\"speakerGender\\": \\"female\\"}]}"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/event-stream' },
+      text: async () => sseBody,
+    });
+
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'gpt-4o-mini',
+      apiKey: 'sk-test',
+      fetchFn: mockFetch as any,
+    });
+
+    const [seg] = await client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' });
+    expect(seg.translatedText).toBe('Xin chào thế giới');
+    expect(seg.speakerGender).toBe('female');
+  });
+
+  it('handles SSE streaming responses even when content-type header is omitted or generic', async () => {
+    const sseBody = [
+      'data: {"choices":[{"delta":{"content":"{\\"translations\\": [{\\"id\\": \\"s1\\", \\"translatedText\\": \\"Chào buổi sáng\\"}]}"}}]}\n',
+      'data: [DONE]\n',
+    ].join('');
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/plain' },
+      text: async () => sseBody,
+    });
+
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'gpt-4o-mini',
+      fetchFn: mockFetch as any,
+    });
+
+    const [seg] = await client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' });
+    expect(seg.translatedText).toBe('Chào buổi sáng');
+  });
 });

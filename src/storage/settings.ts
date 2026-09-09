@@ -234,6 +234,7 @@ export async function pingOpenAiConnection(
         model: model.trim(),
         messages: [{ role: 'user', content: 'Ping' }],
         max_tokens: 5,
+        stream: false,
       }),
     });
 

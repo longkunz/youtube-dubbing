@@ -60,6 +60,39 @@ function stripMarkdownFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 }
 
+/**
+ * Parses Server-Sent Events (SSE / text/event-stream) payload and reconstructs
+ * the accumulated content string across all streamed chunks.
+ */
+export function parseSseStream(sseText: string): string {
+  const lines = sseText.split(/\r?\n/);
+  let accumulated = '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(':')) continue;
+    if (trimmed.startsWith('data:')) {
+      const dataStr = trimmed.slice(5).trim();
+      if (dataStr === '[DONE]') continue;
+      try {
+        const parsed = JSON.parse(dataStr);
+        const choice = parsed.choices?.[0];
+        const chunk =
+          choice?.delta?.content ??
+          choice?.text ??
+          choice?.message?.content ??
+          parsed.delta?.content ??
+          '';
+        if (typeof chunk === 'string') {
+          accumulated += chunk;
+        }
+      } catch {
+        // Not a JSON chunk, ignore
+      }
+    }
+  }
+  return accumulated;
+}
+
 function buildPrompts(segments: Segment[], targetLanguage: string): { systemPrompt: string; userPrompt: string } {
   const segmentList = segments
     .map((s) => `{ "id": ${JSON.stringify(s.id)}, "sourceText": ${JSON.stringify(s.sourceText)} }`)
@@ -198,6 +231,7 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
+      stream: false,
       response_format: { type: 'json_object' },
     };
 
@@ -266,26 +300,60 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
       );
     }
 
-    let body: OpenAiChatCompletionResponse | null = null;
-    let rawText = '';
-    try {
-      body = (await response.json()) as OpenAiChatCompletionResponse;
-    } catch {
-      // Envelope is not JSON — capture the raw body for diagnostics.
-      // Some minimal proxies return the content payload directly instead
-      // of the OpenAI {choices[0].message.content} envelope.
+    const contentType = (() => {
       try {
-        if (typeof response.clone === 'function') {
-          rawText = await response.clone().text();
-        } else if (typeof response.text === 'function') {
-          rawText = await response.text();
+        return response.headers?.get?.('content-type') ?? '';
+      } catch {
+        return '';
+      }
+    })();
+
+    let rawText = '';
+    let body: OpenAiChatCompletionResponse | null = null;
+
+    // Read body text first if available, avoiding premature stream lock
+    if (typeof response.text === 'function') {
+      try {
+        rawText = await response.text();
+      } catch {
+        rawText = '';
+      }
+    } else if (typeof response.clone === 'function') {
+      try {
+        const cloned = response.clone();
+        if (typeof cloned.text === 'function') {
+          rawText = await cloned.text();
         }
       } catch {
         rawText = '';
       }
     }
 
-    const content = body?.choices?.[0]?.message?.content;
+    if (rawText) {
+      try {
+        body = JSON.parse(rawText) as OpenAiChatCompletionResponse;
+      } catch {
+        // Not standard JSON — might be SSE or plain text
+      }
+    } else if (typeof response.json === 'function') {
+      // Mock / fallback support where response only provides .json()
+      try {
+        body = (await response.json()) as OpenAiChatCompletionResponse;
+      } catch {
+        body = null;
+      }
+    }
+
+    let content = body?.choices?.[0]?.message?.content;
+
+    // If no content from standard envelope, check for SSE (text/event-stream or data: lines)
+    if (!content && (contentType.toLowerCase().includes('text/event-stream') || rawText.includes('data:'))) {
+      const sseAccumulated = parseSseStream(rawText);
+      if (sseAccumulated) {
+        content = sseAccumulated;
+      }
+    }
+
     if (!content && rawText) {
       // Fallback: proxy returned the translations payload without envelope.
       try {
@@ -296,17 +364,10 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
       }
     }
     if (!content) {
-      const contentType = (() => {
-        try {
-          return response.headers?.get?.('content-type') ?? 'unknown';
-        } catch {
-          return 'unknown';
-        }
-      })();
       const snippet = rawText.trim() ? rawText.trim().slice(0, 300) : '<empty body>';
       throw new TranslationError(
         TranslationErrorCode.INVALID_RESPONSE,
-        `OpenAI proxy returned non-JSON body (HTTP ${response.status}, content-type: ${contentType}): ${snippet}`,
+        `OpenAI proxy returned non-JSON body (HTTP ${response.status}, content-type: ${contentType || 'unknown'}): ${snippet}`,
       );
     }
 
