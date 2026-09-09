@@ -140,6 +140,32 @@ export const HUD_STYLES = `
   text-shadow: 0 0 10px rgba(0, 242, 254, 0.6);
 }
 
+.cockpit-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cockpit-settings-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.cockpit-settings-btn:hover {
+  color: var(--cyber-cyan);
+  background: rgba(0, 242, 254, 0.15);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+  transform: rotate(30deg);
+}
+
 .cockpit-close-btn {
   background: transparent;
   border: none;
@@ -458,6 +484,29 @@ export const HUD_STYLES = `
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   color: #64748b;
+}
+
+.cockpit-footer-btn {
+  background: transparent;
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  color: var(--cyber-cyan);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+  letter-spacing: 0.05em;
+}
+
+.cockpit-footer-btn:hover {
+  background: rgba(0, 242, 254, 0.15);
+  color: #ffffff;
+  border-color: var(--cyber-cyan);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.35);
 }
 
 /* SUBTITLE OVERLAY — YouTube CC Gentle Styling per ADR-0005/ADR-0006 */

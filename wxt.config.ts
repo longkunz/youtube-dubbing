@@ -14,6 +14,13 @@ export default defineConfig({
       'https://speech.platform.bing.com/*',
       'wss://speech.platform.bing.com/*',
     ],
+    options_ui: {
+      page: 'options.html',
+      open_in_tab: true,
+    },
+    action: {
+      default_title: 'AetherDub Command Center',
+    },
   },
   vite: () => ({
     plugins: [react()],

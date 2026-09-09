@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Ambient type declarations for Chrome Extension APIs used across the extension.
  */
 
@@ -19,5 +19,12 @@ declare namespace chrome {
   namespace runtime {
     const lastError: { message?: string } | undefined;
     function openOptionsPage(callback?: () => void): void | Promise<void>;
+    function getURL(path: string): string;
+  }
+
+  namespace action {
+    const onClicked: {
+      addListener(callback: (tab?: unknown) => void): void;
+    };
   }
 }

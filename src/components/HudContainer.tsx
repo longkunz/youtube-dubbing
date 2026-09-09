@@ -179,6 +179,16 @@ export const HudContainer: React.FC<HudContainerProps> = ({
     }
   };
 
+  const handleOpenSettings = () => {
+    if (onConfigureSettings) {
+      onConfigureSettings();
+    } else if (typeof chrome !== 'undefined' && chrome?.runtime?.openOptionsPage) {
+      chrome.runtime.openOptionsPage();
+    } else if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
+      window.open(chrome.runtime.getURL('options.html'), '_blank');
+    }
+  };
+
   return (
     <div className="hud-wrapper">
       {!captionsAvailable && !isBannerDismissed && (
@@ -204,6 +214,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         onDuckLevelChange={handleDuckLevelChange}
         isPlaying={isPlaying}
         isDucked={isDucked}
+        onOpenSettings={handleOpenSettings}
       />
       <SubtitleOverlay
         segment={activeSegment}

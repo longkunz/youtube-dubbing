@@ -160,4 +160,21 @@ describe('CyberCockpit', () => {
     fireEvent.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('calls onOpenSettings when header settings button or footer link is clicked', () => {
+    const onOpenSettings = vi.fn();
+    render(<CyberCockpit isOpen={true} onClose={vi.fn()} onOpenSettings={onOpenSettings} />);
+
+    // Header settings button
+    const headerSettingsBtn = screen.getByTestId('cockpit-settings-btn');
+    expect(headerSettingsBtn).toBeInTheDocument();
+    fireEvent.click(headerSettingsBtn);
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+
+    // Footer settings link button
+    const footerSettingsBtn = screen.getByTestId('cockpit-footer-settings-btn');
+    expect(footerSettingsBtn).toBeInTheDocument();
+    fireEvent.click(footerSettingsBtn);
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+  });
 });
