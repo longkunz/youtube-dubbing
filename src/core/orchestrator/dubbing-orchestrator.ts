@@ -43,6 +43,9 @@ export interface DubbingOrchestratorDeps {
 }
 
 export class DubbingOrchestratorImpl implements DubbingOrchestrator {
+  private static readonly MAX_CONCURRENT_TTS = 2;
+  private static readonly MAX_SEGMENT_RETRIES = 2;
+
   private readonly media: HTMLMediaElement;
   private ducker: AudioDucker;
   private readonly stretcher: TimeStretcher;
@@ -63,7 +66,10 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private maleVoice: string;
   private diarizationEnabled: boolean;
 
-  /** Lookahead TTS diagnostics (surfaced via console, throttled). */
+  /** Lookahead TTS diagnostics & concurrency control. */
+  private inFlightTtsCount = 0;
+  private segmentFailures = new Map<string, number>();
+  private retryTimers: ReturnType<typeof setTimeout>[] = [];
   private ttsFailureCount = 0;
   private ttsSuccessLogged = false;
 
@@ -142,51 +148,6 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
         this.syncEngine.playSegment(activeSegment, activeSegment.audioBlob, rate);
         this.ducker.duck();
       }
-    } else if (activeSegment && !activeSegment.audioBlob && !this.slidingWindow.hasSynthesized(activeSegment.id)) {
-      // Active segment at playhead has no audio yet and hasn't been queued — synthesize immediately!
-      this.slidingWindow.markSynthesized(activeSegment.id);
-      if (this.ttsClient) {
-        const voice = this.resolveVoiceForSegment(activeSegment);
-        activeSegment.voiceProfileId = voice;
-        const text = activeSegment.translatedText ?? activeSegment.sourceText;
-        this.ttsClient
-          .synthesize(text, { voice })
-          .then((blob) => {
-            if (!blob || blob.size === 0) {
-              this.reportTtsFailure(activeSegment.id, 'Edge TTS returned empty audio');
-              return;
-            }
-            activeSegment.audioBlob = blob;
-            if (!this.ttsSuccessLogged) {
-              this.ttsSuccessLogged = true;
-              console.info(
-                `[AetherDub] Dub TTS audio ready (seg ${activeSegment.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
-              );
-            } else {
-              console.log(
-                `[AetherDub] Dub TTS audio ready (seg ${activeSegment.id}, ${(blob.size / 1024).toFixed(1)} KB)`
-              );
-            }
-            // If playhead is still inside this segment, begin playback immediately
-            const curTime = this.media.currentTime;
-            if (this.findSegmentAt(curTime)?.id === activeSegment.id && this._activeSegmentId !== activeSegment.id) {
-              this._activeSegmentId = activeSegment.id;
-              const rate = this.stretcher.calculateRate(
-                this.estimateAudioDuration(blob, activeSegment.duration),
-                activeSegment.duration,
-                this._playbackRate,
-              );
-              console.log(
-                `[AetherDub] Playing segment ${activeSegment.id} upon synthesis completion at ${curTime.toFixed(2)}s`
-              );
-              this.syncEngine.playSegment(activeSegment, blob, rate);
-              this.ducker.duck();
-            }
-          })
-          .catch((err) => {
-            this.reportTtsFailure(activeSegment.id, err?.message || String(err));
-          });
-      }
     } else if ((!activeSegment || !activeSegment.audioBlob) && this._activeSegmentId !== null) {
       // Exited a segment into silence, OR entered an audio-less segment.
       // Either way: stop Dub Track, restore volume, clear active tracking.
@@ -195,62 +156,14 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       this.ducker.unduck();
     }
 
-    // Queue upcoming segments in the sliding window.
-    if (this.transcript) {
-      const toSynthesize = this.slidingWindow.getSegmentsToSynthesize(
-        currentTime,
-        this.transcript.segments,
-      );
-      for (const seg of toSynthesize) {
-        this.slidingWindow.markSynthesized(seg.id);
-        if (this.ttsClient && !seg.audioBlob) {
-          const voice = this.resolveVoiceForSegment(seg);
-          seg.voiceProfileId = voice;
-          const text = seg.translatedText ?? seg.sourceText;
-          this.ttsClient
-            .synthesize(text, { voice })
-            .then((blob) => {
-              if (!blob || blob.size === 0) {
-                this.reportTtsFailure(seg.id, 'Edge TTS returned empty audio');
-                return;
-              }
-              seg.audioBlob = blob;
-              if (!this.ttsSuccessLogged) {
-                this.ttsSuccessLogged = true;
-                console.info(
-                  `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
-                );
-              } else {
-                console.log(
-                  `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB)`
-                );
-              }
-              // If playback has reached this segment while it was synthesizing:
-              const curTime = this.media.currentTime;
-              if (this.findSegmentAt(curTime)?.id === seg.id && this._activeSegmentId !== seg.id) {
-                this._activeSegmentId = seg.id;
-                const rate = this.stretcher.calculateRate(
-                  this.estimateAudioDuration(blob, seg.duration),
-                  seg.duration,
-                  this._playbackRate,
-                );
-                console.log(
-                  `[AetherDub] Playing segment ${seg.id} upon synthesis completion at ${curTime.toFixed(2)}s`
-                );
-                this.syncEngine.playSegment(seg, blob, rate);
-                this.ducker.duck();
-              }
-            })
-            .catch((err) => {
-              this.reportTtsFailure(seg.id, err?.message || String(err));
-            });
-        }
-      }
-    }
+    // Pump synthesis queue (throttled to MAX_CONCURRENT_TTS)
+    this.pumpSynthesisQueue();
   }
 
   handleSeek(newTime: number): void {
     if (this.status === 'destroyed') return;
+    for (const t of this.retryTimers) clearTimeout(t);
+    this.retryTimers = [];
     // Immediately stop active audio and restore volume.
     this.syncEngine.stop();
     this.ducker.destroy();
@@ -259,9 +172,11 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     });
     this._activeSegmentId = null;
     this.slidingWindow.recenter(newTime);
+    this.segmentFailures.clear();
     if (this.status !== 'paused') {
       this.status = 'ready';
     }
+    this.pumpSynthesisQueue();
   }
 
   handleRateChange(newRate: number): void {
@@ -274,6 +189,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     if (this.status === 'destroyed') return;
     this.syncEngine.resume();
     this.status = 'ready';
+    this.pumpSynthesisQueue();
   }
 
   handlePause(): void {
@@ -353,9 +269,14 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     segment.voiceProfileId = voice;
     if (this.ttsClient) {
       const text = segment.translatedText ?? segment.sourceText;
-      const blob = await this.ttsClient.synthesize(text, { voice });
-      segment.audioBlob = blob;
-      return blob;
+      try {
+        const blob = await this.ttsClient.synthesize(text, { voice });
+        segment.audioBlob = blob;
+        return blob;
+      } catch (err: any) {
+        this.reportTtsFailure(segment.id, err?.message || String(err));
+        return undefined;
+      }
     }
     return undefined;
   }
@@ -377,17 +298,19 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     if (toPrime.length === 0) return;
 
     console.log(`[AetherDub] Priming initial lookahead TTS for ${toPrime.length} segment(s)...`);
-    await Promise.allSettled(
-      toPrime.map(async (seg) => {
+    for (const seg of toPrime) {
+      if (!seg.audioBlob) {
         this.slidingWindow.markSynthesized(seg.id);
         const blob = await this.synthesizeSegment(seg);
         if (blob) {
           console.log(
             `[AetherDub] Primed initial audio for segment ${seg.id} (${(blob.size / 1024).toFixed(1)} KB)`
           );
+        } else {
+          this.slidingWindow.unmarkSynthesized(seg.id);
         }
-      })
-    );
+      }
+    }
   }
 
   getState(): OrchestratorState {
@@ -403,11 +326,147 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   }
 
   destroy(): void {
+    for (const t of this.retryTimers) clearTimeout(t);
+    this.retryTimers = [];
     this.syncEngine.stop();
     this.ducker.destroy();
     this.slidingWindow.reset();
+    this.segmentFailures.clear();
+    this.inFlightTtsCount = 0;
     this._activeSegmentId = null;
     this.status = 'destroyed';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Dispatches pending segment synthesis within the sliding window,
+   * bounded by MAX_CONCURRENT_TTS to avoid server throttling / connection pool exhaustion.
+   */
+  private pumpSynthesisQueue(): void {
+    if (
+      !this.transcript ||
+      !this.ttsClient ||
+      this.status === 'idle' ||
+      this.status === 'destroyed'
+    ) {
+      return;
+    }
+
+    const currentTime = this.media.currentTime;
+
+    // 1. High priority: active segment at playhead (if missing audio and not yet queued)
+    const activeSegment = this.findSegmentAt(currentTime);
+    if (
+      activeSegment &&
+      !activeSegment.audioBlob &&
+      !this.slidingWindow.hasSynthesized(activeSegment.id)
+    ) {
+      this.requestSegmentSynthesis(activeSegment);
+    }
+
+    // 2. Upcoming segments within sliding lookahead window
+    if (this.inFlightTtsCount >= DubbingOrchestratorImpl.MAX_CONCURRENT_TTS) {
+      return;
+    }
+
+    const toSynthesize = this.slidingWindow.getSegmentsToSynthesize(
+      currentTime,
+      this.transcript.segments,
+    );
+
+    for (const seg of toSynthesize) {
+      if (this.inFlightTtsCount >= DubbingOrchestratorImpl.MAX_CONCURRENT_TTS) {
+        break;
+      }
+      this.requestSegmentSynthesis(seg);
+    }
+  }
+
+  private requestSegmentSynthesis(seg: Segment): void {
+    if (!this.ttsClient || seg.audioBlob || this.slidingWindow.hasSynthesized(seg.id)) {
+      return;
+    }
+
+    this.slidingWindow.markSynthesized(seg.id);
+    this.inFlightTtsCount++;
+
+    const voice = this.resolveVoiceForSegment(seg);
+    seg.voiceProfileId = voice;
+    const text = seg.translatedText ?? seg.sourceText;
+
+    this.ttsClient
+      .synthesize(text, { voice })
+      .then((blob) => {
+        if (!blob || blob.size === 0) {
+          this.handleSegmentTtsFailure(seg.id, 'Edge TTS returned empty audio');
+          return;
+        }
+
+        seg.audioBlob = blob;
+        this.segmentFailures.delete(seg.id);
+
+        if (!this.ttsSuccessLogged) {
+          this.ttsSuccessLogged = true;
+          console.info(
+            `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
+          );
+        } else {
+          console.log(
+            `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB)`
+          );
+        }
+
+        // If playback has reached this segment while it was synthesizing:
+        const curTime = this.media.currentTime;
+        if (
+          this.findSegmentAt(curTime)?.id === seg.id &&
+          this._activeSegmentId !== seg.id &&
+          this.status !== 'paused' &&
+          this.status !== 'destroyed'
+        ) {
+          this._activeSegmentId = seg.id;
+          const rate = this.stretcher.calculateRate(
+            this.estimateAudioDuration(blob, seg.duration),
+            seg.duration,
+            this._playbackRate,
+          );
+          console.log(
+            `[AetherDub] Playing segment ${seg.id} upon synthesis completion at ${curTime.toFixed(2)}s`
+          );
+          this.syncEngine.playSegment(seg, blob, rate);
+          this.ducker.duck();
+        }
+      })
+      .catch((err) => {
+        this.handleSegmentTtsFailure(seg.id, err?.message || String(err));
+      })
+      .finally(() => {
+        this.inFlightTtsCount = Math.max(0, this.inFlightTtsCount - 1);
+        this.pumpSynthesisQueue();
+      });
+  }
+
+  private handleSegmentTtsFailure(segmentId: string, detail: unknown): void {
+    const currentFailures = (this.segmentFailures.get(segmentId) ?? 0) + 1;
+    this.segmentFailures.set(segmentId, currentFailures);
+    this.reportTtsFailure(segmentId, detail);
+
+    if (currentFailures <= DubbingOrchestratorImpl.MAX_SEGMENT_RETRIES) {
+      const timer = setTimeout(() => {
+        if (this.status !== 'destroyed') {
+          this.slidingWindow.unmarkSynthesized(segmentId);
+          this.pumpSynthesisQueue();
+        }
+      }, 1000 * currentFailures);
+      this.retryTimers.push(timer);
+    } else {
+      console.warn(
+        `[AetherDub] Segment ${segmentId} reached maximum retry limit (${DubbingOrchestratorImpl.MAX_SEGMENT_RETRIES}). Skipping.`
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

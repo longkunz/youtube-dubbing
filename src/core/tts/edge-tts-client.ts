@@ -62,6 +62,11 @@ export interface EdgeTtsClientOptions {
    * Override in tests for deterministic URLs.
    */
   secMsGecGenerator?: () => Promise<string> | string;
+  /**
+   * Timeout in ms for an individual synthesis attempt over WebSocket.
+   * Default: 10000 (10 seconds).
+   */
+  attemptTimeoutMs?: number;
 }
 
 
@@ -183,6 +188,7 @@ export class EdgeTtsClient {
   private readonly enableFallback: boolean;
   private readonly fallback?: WebSpeechFallback;
   private readonly secMsGecGenerator?: () => Promise<string> | string;
+  private readonly attemptTimeoutMs: number;
 
   constructor(options: EdgeTtsClientOptions = {}) {
     this.wsFactory =
@@ -196,6 +202,7 @@ export class EdgeTtsClient {
     this.enableFallback = options.enableFallback ?? false;
     this.fallback = options.fallback;
     this.secMsGecGenerator = options.secMsGecGenerator;
+    this.attemptTimeoutMs = options.attemptTimeoutMs ?? 10000;
   }
 
 
@@ -315,9 +322,27 @@ export class EdgeTtsClient {
       const audioChunks: Uint8Array<ArrayBuffer>[] = [];
       let settled = false;
 
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      if (this.attemptTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          settle(() =>
+            reject(
+              new EdgeTtsError(
+                EdgeTtsErrorCode.CONNECTION_CLOSED,
+                `Edge TTS attempt timed out after ${this.attemptTimeoutMs}ms`
+              )
+            )
+          );
+        }, this.attemptTimeoutMs);
+      }
+
       const settle = (action: () => void) => {
         if (settled) return;
         settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         ws.close();
         action();
       };

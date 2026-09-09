@@ -47,6 +47,13 @@ export class SlidingWindow {
   }
 
   /**
+   * Unmark a segment if synthesis failed so it can be re-attempted.
+   */
+  unmarkSynthesized(segmentId: string): void {
+    this.synthesizedIds.delete(segmentId);
+  }
+
+  /**
    * Re-center on a new timeline position after seeking.
    * Clears all previously queued synthesis tracking so segments in the new
    * window can be re-queued.

@@ -502,5 +502,30 @@ describe('EdgeTtsClient', () => {
         code: EdgeTtsErrorCode.MAX_RETRIES_EXCEEDED,
       });
     });
+
+    it('retries when an attempt times out via attemptTimeoutMs', async () => {
+      const { factory, handles } = makeMockWsFactory();
+      const client = new EdgeTtsClient({
+        webSocketFactory: factory,
+        retryDelayMs: 0,
+        attemptTimeoutMs: 50,
+      });
+
+      const synthPromise = client.synthesize('Hello', FEMALE_VOICE);
+
+      // Attempt 1 opens but hangs (times out after 50ms)
+      await waitUntil(() => handles.length >= 1);
+      handles[0].open();
+
+      // Attempt 2 starts after attempt 1 times out -> succeeds!
+      await waitUntil(() => handles.length >= 2, 2000);
+      handles[1].open();
+      handles[1].sendBinary(buildAudioFrame(FAKE_AUDIO_HEADER, FAKE_AUDIO_BYTES));
+      handles[1].sendText('Path:turn.end\r\n\r\n');
+
+      const blob = await synthPromise;
+      expect(blob).toBeInstanceOf(Blob);
+      expect(handles.length).toBe(2);
+    });
   });
 });

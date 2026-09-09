@@ -129,6 +129,16 @@ describe('SlidingWindow', () => {
       const secondBatch = window.getSegmentsToSynthesize(20, sampleSegments);
       expect(secondBatch.map(s => s.id)).toEqual(['s3']);
     });
+
+    it('allows a segment to be re-queried after unmarkSynthesized', () => {
+      const window = new SlidingWindow(60);
+      window.markSynthesized('s0');
+      expect(window.hasSynthesized('s0')).toBe(true);
+      window.unmarkSynthesized('s0');
+      expect(window.hasSynthesized('s0')).toBe(false);
+      const toSynth = window.getSegmentsToSynthesize(0, sampleSegments);
+      expect(toSynth.map(s => s.id)).toContain('s0');
+    });
   });
 
   describe('recenter() and seeking', () => {

@@ -227,6 +227,53 @@ describe('DubbingOrchestratorImpl', () => {
       expect(infoSpy).toHaveBeenCalledTimes(1);
       orch.destroy();
     });
+
+    it('limits concurrent TTS synthesis requests to MAX_CONCURRENT_TTS (2)', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const deferredResolvers: (() => void)[] = [];
+
+      const controlledClient = {
+        synthesize: vi.fn().mockImplementation(() => {
+          inFlight++;
+          if (inFlight > maxInFlight) maxInFlight = inFlight;
+          return new Promise<Blob>((resolve) => {
+            deferredResolvers.push(() => {
+              inFlight--;
+              resolve(new Blob(['audio'], { type: 'audio/mpeg' }));
+            });
+          });
+        }),
+      };
+
+      const manySegmentsTranscript: Transcript = {
+        ...BASE_TRANSCRIPT,
+        segments: Array.from({ length: 6 }, (_, i) =>
+          makeSegment({
+            id: `seg-${i}`,
+            startTime: i * 5,
+            endTime: (i + 1) * 5,
+            audioBlob: undefined,
+          })
+        ),
+      };
+
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: controlledClient });
+      await orch.init('vid-001', manySegmentsTranscript, BASE_CONFIG);
+
+      orch.handleTimeUpdate(0.0);
+      expect(controlledClient.synthesize).toHaveBeenCalledTimes(2);
+      expect(maxInFlight).toBe(2);
+
+      // Resolve one in-flight request -> next segment should be dispatched
+      deferredResolvers[0]();
+      await vi.waitFor(() => {
+        expect(controlledClient.synthesize).toHaveBeenCalledTimes(3);
+      });
+      expect(maxInFlight).toBe(2);
+
+      orch.destroy();
+    });
   });
 
   // -------------------------------------------------------------------------
