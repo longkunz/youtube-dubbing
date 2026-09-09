@@ -21,6 +21,12 @@ export default defineConfig({
     action: {
       default_title: 'AetherDub Command Center',
     },
+    web_accessible_resources: [
+      {
+        resources: ['options.html', 'assets/*', 'chunks/*'],
+        matches: ['*://*.youtube.com/*'],
+      },
+    ],
   },
   vite: () => ({
     plugins: [react()],

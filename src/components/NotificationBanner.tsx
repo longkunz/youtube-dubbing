@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { AlertTriangle, Settings, X } from 'lucide-react';
 
 export interface NotificationBannerProps {
@@ -28,6 +28,20 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   const handleConfigure = () => {
     if (onConfigureSettings) {
       onConfigureSettings();
+      return;
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE' }, () => {
+          if (chrome.runtime?.lastError && chrome.runtime?.openOptionsPage) {
+            chrome.runtime.openOptionsPage();
+          }
+        });
+      } catch {
+        if (chrome.runtime?.openOptionsPage) {
+          chrome.runtime.openOptionsPage();
+        }
+      }
     } else if (typeof chrome !== 'undefined' && chrome.runtime?.openOptionsPage) {
       chrome.runtime.openOptionsPage();
     }

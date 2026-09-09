@@ -20,6 +20,19 @@ declare namespace chrome {
     const lastError: { message?: string } | undefined;
     function openOptionsPage(callback?: () => void): void | Promise<void>;
     function getURL(path: string): string;
+    function sendMessage(
+      message: unknown,
+      responseCallback?: (response: unknown) => void
+    ): void | Promise<unknown>;
+    const onMessage: {
+      addListener(
+        callback: (
+          message: unknown,
+          sender: unknown,
+          sendResponse: (response?: unknown) => void
+        ) => boolean | void
+      ): void;
+    };
   }
 
   namespace action {

@@ -182,10 +182,22 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const handleOpenSettings = () => {
     if (onConfigureSettings) {
       onConfigureSettings();
+      return;
+    }
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS_PAGE' }, () => {
+          if (chrome.runtime?.lastError && chrome.runtime?.openOptionsPage) {
+            chrome.runtime.openOptionsPage();
+          }
+        });
+      } catch {
+        if (chrome.runtime?.openOptionsPage) {
+          chrome.runtime.openOptionsPage();
+        }
+      }
     } else if (typeof chrome !== 'undefined' && chrome?.runtime?.openOptionsPage) {
       chrome.runtime.openOptionsPage();
-    } else if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
-      window.open(chrome.runtime.getURL('options.html'), '_blank');
     }
   };
 
