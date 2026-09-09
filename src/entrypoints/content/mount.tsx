@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { HudContainer } from '@/components/HudContainer';
+import { HudContainer, type HudContainerProps } from '@/components/HudContainer';
 import { HUD_STYLES } from '@/styles/hud.styles';
 import type { DubbingOrchestrator } from '@/types/domain';
 
@@ -8,9 +8,15 @@ export interface HudInstance {
   unmount: () => void;
   isMounted: () => boolean;
   shadowRoot: ShadowRoot;
+  updateOrchestrator?: (orchestrator: DubbingOrchestrator | undefined) => void;
+  updateProps?: (props: Partial<HudContainerProps>) => void;
 }
 
-export function mountHud(container: HTMLElement, orchestrator?: DubbingOrchestrator): HudInstance {
+export function mountHud(
+  container: HTMLElement,
+  orchestrator?: DubbingOrchestrator,
+  initialProps?: Partial<HudContainerProps>
+): HudInstance {
   // Check if an existing host is already attached
   const existingHost = container.querySelector('[data-aetherdub-host]') as HTMLElement | null;
   if (existingHost) {
@@ -42,8 +48,18 @@ export function mountHud(container: HTMLElement, orchestrator?: DubbingOrchestra
   mountPoint.className = 'aetherdub-mount-root';
   shadowRoot.appendChild(mountPoint);
 
+  let mounted = true;
+  let currentOrchestrator = orchestrator;
+  let currentProps: Partial<HudContainerProps> = { ...initialProps };
+
+  const renderComponent = () => {
+    if (mounted && root) {
+      root.render(<HudContainer orchestrator={currentOrchestrator} {...currentProps} />);
+    }
+  };
+
   let root: Root | null = createRoot(mountPoint);
-  root.render(<HudContainer orchestrator={orchestrator} />);
+  renderComponent();
 
   // Mount at start of container
   if (container.firstChild) {
@@ -51,8 +67,6 @@ export function mountHud(container: HTMLElement, orchestrator?: DubbingOrchestra
   } else {
     container.appendChild(hostEl);
   }
-
-  let mounted = true;
 
   const instance: HudInstance = {
     unmount: () => {
@@ -68,6 +82,14 @@ export function mountHud(container: HTMLElement, orchestrator?: DubbingOrchestra
     },
     isMounted: () => mounted && (hostEl.isConnected ?? true),
     shadowRoot,
+    updateOrchestrator: (newOrch?: DubbingOrchestrator) => {
+      currentOrchestrator = newOrch;
+      renderComponent();
+    },
+    updateProps: (newProps: Partial<HudContainerProps>) => {
+      currentProps = { ...currentProps, ...newProps };
+      renderComponent();
+    },
   };
 
   (hostEl as any).__aetherdub_instance = instance;

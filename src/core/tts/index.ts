@@ -21,3 +21,6 @@ export { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from './voices';
 export { WebSpeechFallback, ResilientTtsClient } from './web-speech-fallback';
 export type { ResilientTtsClientOptions } from './web-speech-fallback';
 
+export { BackgroundDubbingTtsClient } from './background-tts-client';
+
+

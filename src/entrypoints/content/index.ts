@@ -1,5 +1,6 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { mountHud, HudInstance } from './mount';
+import { startDubbingPipeline, stopDubbingPipeline } from './orchestrator-coordinator';
 
 let activeInstance: HudInstance | null = null;
 
@@ -9,24 +10,29 @@ export function tryMount(): HudInstance | null {
     if (activeInstance) {
       activeInstance.unmount();
       activeInstance = null;
+      stopDubbingPipeline();
     }
     return null;
   }
 
   if (activeInstance && activeInstance.isMounted() && controls.querySelector('[data-aetherdub-host]')) {
+    startDubbingPipeline(activeInstance).catch(() => {});
     return activeInstance;
   }
 
   if (activeInstance) {
     activeInstance.unmount();
     activeInstance = null;
+    stopDubbingPipeline();
   }
 
   activeInstance = mountHud(controls);
+  startDubbingPipeline(activeInstance).catch(() => {});
   return activeInstance;
 }
 
 export function resetActiveInstanceForTesting(): void {
+  stopDubbingPipeline();
   if (activeInstance) {
     activeInstance.unmount();
     activeInstance = null;
