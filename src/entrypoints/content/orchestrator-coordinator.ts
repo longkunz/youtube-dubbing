@@ -15,7 +15,7 @@ import { DubbingOrchestratorImpl } from '@/core/orchestrator/dubbing-orchestrato
 import { BackgroundDubbingTtsClient } from '@/core/tts/background-tts-client';
 import { SegmentCache } from '@/storage/segment-cache';
 import { getSettings } from '@/storage/settings';
-import type { Transcript, Segment } from '@/types/domain';
+import type { Transcript, Segment, CaptionTrack } from '@/types/domain';
 import type { HudInstance } from './mount';
 
 export interface CoordinatorState {
@@ -55,13 +55,39 @@ export function extractVideoId(urlStr?: string): string | null {
 }
 
 /**
+ * Extract caption tracks directly from YouTube's in-DOM movie_player instance if available.
+ */
+export function getTracksFromMoviePlayer(): CaptionTrack[] {
+  if (typeof document === 'undefined') return [];
+  try {
+    const player = document.getElementById('movie_player') as any;
+    if (player && typeof player.getOption === 'function') {
+      const tracklist = player.getOption('captions', 'tracklist');
+      if (Array.isArray(tracklist) && tracklist.length > 0) {
+        return tracklist.map((t: any) => ({
+          baseUrl: t.baseUrl,
+          languageCode: t.languageCode,
+          name: typeof t.name === 'string' ? t.name : (t.name?.simpleText || ''),
+          kind: t.kind === 'asr' ? 'asr' : undefined,
+          isTranslatable: t.isTranslatable ?? false,
+        }));
+      }
+    }
+  } catch {}
+  return [];
+}
+
+/**
  * Retrieve YouTube player response containing captionTracks.
  * Checks DOM <script> tags first, falls back to fetching watch page HTML.
  */
 export async function getPlayerResponse(videoId: string): Promise<any> {
-  // 1. Try window.ytInitialPlayerResponse if accessible in same scope
+  // 1. Try window.ytInitialPlayerResponse if accessible in same scope and matches current video
   if (typeof window !== 'undefined' && (window as any).ytInitialPlayerResponse) {
-    return (window as any).ytInitialPlayerResponse;
+    const pr = (window as any).ytInitialPlayerResponse;
+    if (!videoId || pr?.videoDetails?.videoId === videoId) {
+      return pr;
+    }
   }
 
   // 2. Search DOM script tags
@@ -73,17 +99,35 @@ export async function getPlayerResponse(videoId: string): Promise<any> {
         const match = /ytInitialPlayerResponse\s*=\s*({.+?});/s.exec(text);
         if (match && match[1]) {
           try {
-            return JSON.parse(match[1]);
+            const pr = JSON.parse(match[1]);
+            if (!videoId || pr?.videoDetails?.videoId === videoId) {
+              return pr;
+            }
           } catch {}
         }
       }
     }
   }
 
-  // 3. Fetch watch page HTML
+  // 3. Try YouTube player getPlayerResponse() if exposed on movie_player
+  if (typeof document !== 'undefined') {
+    try {
+      const player = document.getElementById('movie_player') as any;
+      if (player && typeof player.getPlayerResponse === 'function') {
+        const pr = player.getPlayerResponse();
+        if (pr && (!videoId || pr?.videoDetails?.videoId === videoId)) {
+          return pr;
+        }
+      }
+    } catch {}
+  }
+
+  // 4. Fetch watch page HTML
   try {
     const fetcher = new TranscriptFetcher();
-    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
+    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      credentials: 'include',
+    });
     if (res.ok) {
       const html = await res.text();
       const pr = fetcher.extractPlayerResponseFromHtml(html);
@@ -205,11 +249,16 @@ export async function startDubbingPipeline(
     // 1. Fetch transcript
     const fetcher = new TranscriptFetcher();
     const playerResponse = await getPlayerResponse(videoId);
+    let domTracks: CaptionTrack[] | undefined = getTracksFromMoviePlayer();
+    if (domTracks.length === 0) {
+      domTracks = undefined;
+    }
 
     let rawTranscript: Transcript;
     try {
       rawTranscript = await fetcher.fetchTranscript(videoId, {
         playerResponse,
+        captionTracks: domTracks,
         preferredLang: 'en',
       });
     } catch (err: any) {

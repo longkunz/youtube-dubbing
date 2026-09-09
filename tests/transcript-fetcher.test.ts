@@ -40,6 +40,36 @@ describe('TranscriptFetcher', () => {
       expect(tracks[1].kind).toBe('asr');
     });
 
+    it('extracts caption tracks from production playerResponse with nested captions object', () => {
+      const playerResponse: PlayerResponseCaptions = {
+        captions: {
+          playerCaptionsTracklistRenderer: {
+            captionTracks: [
+              {
+                baseUrl: 'https://www.youtube.com/api/timedtext?v=i2hw-Rjnqpo&lang=ar&kind=asr',
+                name: { simpleText: 'Arabic (auto-generated)' },
+                languageCode: 'ar',
+                kind: 'asr'
+              },
+              {
+                baseUrl: 'https://www.youtube.com/api/timedtext?v=i2hw-Rjnqpo&lang=en&kind=asr',
+                name: { simpleText: 'English (auto-generated)' },
+                languageCode: 'en',
+                kind: 'asr'
+              }
+            ]
+          }
+        }
+      };
+
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      const tracks = fetcher.extractCaptionTracks(playerResponse);
+
+      expect(tracks).toHaveLength(2);
+      expect(tracks[0].languageCode).toBe('ar');
+      expect(tracks[1].languageCode).toBe('en');
+    });
+
     it('returns empty array if no caption tracks found in playerResponse', () => {
       const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
       expect(fetcher.extractCaptionTracks({})).toEqual([]);
@@ -97,6 +127,16 @@ describe('TranscriptFetcher', () => {
       const best = fetcher.selectBestCaptionTrack(tracks, 'es');
       expect(best?.languageCode).toBe('es');
     });
+
+    it('falls back to first available track if preferred language is not found', () => {
+      const tracks = [
+        { baseUrl: 'https://youtube.com/ar', languageCode: 'ar', kind: 'asr' },
+        { baseUrl: 'https://youtube.com/ja', languageCode: 'ja', kind: 'asr' }
+      ];
+
+      const best = fetcher.selectBestCaptionTrack(tracks, 'fr');
+      expect(best?.languageCode).toBe('ar');
+    });
   });
 
   describe('fetchTranscript', () => {
@@ -146,6 +186,18 @@ describe('TranscriptFetcher', () => {
       await expect(
         fetcher.fetchTranscript('video-fail', { trackUrl: 'https://bad-url' })
       ).rejects.toThrow(/Failed to fetch timedtext captions/);
+    });
+
+    it('throws descriptive error if timedtext response is empty string', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: async () => '   '
+      });
+
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      await expect(
+        fetcher.fetchTranscript('video-empty', { trackUrl: 'https://empty-url' })
+      ).rejects.toThrow(/Empty caption response received/);
     });
 
     it('throws error when no caption track is available and cannot resolve tracks', async () => {

@@ -36,7 +36,9 @@ export class TranscriptFetcher {
       return [];
     }
 
-    const renderer = playerResponse.playerCaptionsTracklistRenderer;
+    const renderer =
+      playerResponse.captions?.playerCaptionsTracklistRenderer ||
+      playerResponse.playerCaptionsTracklistRenderer;
     const rawTracks = renderer?.captionTracks;
 
     if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
@@ -137,15 +139,18 @@ export class TranscriptFetcher {
       throw new Error(`No caption tracks found for video ${videoId}`);
     }
 
-    const res = await this.fetchFn(targetUrl);
+    const res = await this.fetchFn(targetUrl, { credentials: 'include' } as any);
     if (!res.ok) {
       throw new Error(`Failed to fetch timedtext captions: ${res.status} ${res.statusText}`);
     }
 
     const rawText = await res.text();
-    let rawSegments: Segment[] = [];
-
     const trimmed = rawText.trim();
+    if (!trimmed) {
+      throw new Error(`Empty caption response received for video ${videoId}`);
+    }
+
+    let rawSegments: Segment[] = [];
     if (trimmed.startsWith('<')) {
       rawSegments = parseTimedTextXml(trimmed);
     } else {

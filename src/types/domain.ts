@@ -33,6 +33,18 @@ export interface CaptionTrack {
 }
 
 export interface PlayerResponseCaptions {
+  captions?: {
+    playerCaptionsTracklistRenderer?: {
+      captionTracks?: Array<{
+        baseUrl: string;
+        name?: { simpleText?: string; runs?: Array<{ text: string }> };
+        vssId?: string;
+        languageCode: string;
+        kind?: string;
+        isTranslatable?: boolean;
+      }>;
+    };
+  };
   playerCaptionsTracklistRenderer?: {
     captionTracks?: Array<{
       baseUrl: string;
