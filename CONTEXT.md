@@ -51,3 +51,12 @@ _Avoid_: Injected widget, player iframe, overlay div
 **Voice Profile**:
 A specific speech synthesis configuration defined by locale, gender, pitch, rate, and engine provider.
 _Avoid_: Speaker preset, narrator option, voice persona
+
+**Translation Provider**:
+An external LLM backend service or gateway (e.g., OpenAI-Compatible Proxy, Google Gemini) executing batch translation of dialogue segments with conversational speaker diarization.
+_Avoid_: Translation API, LLM wrapper, model server
+
+**OpenAI-Compatible Endpoint**:
+A REST API gateway conforming to the standard `/v1/chat/completions` specification, accepting customizable base URLs, model identifiers, and optional bearer tokens.
+_Avoid_: Custom proxy, chat URL, backend proxy
+

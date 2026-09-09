@@ -8,9 +8,12 @@
  */
 
 export interface UserSettings {
+  translationProvider: 'gemini' | 'openai-compatible';
   geminiApiKey: string;
+  openaiEndpoint: string;
+  openaiModel: string;
+  openaiApiKey: string;
   groqApiKey: string;
-  openaiApiKey?: string;
   ttsPitch?: string;
   ttsRate?: string;
   ttsProvider: 'edge-tts' | 'web-speech';
@@ -18,9 +21,12 @@ export interface UserSettings {
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
+  translationProvider: 'gemini',
   geminiApiKey: '',
-  groqApiKey: '',
+  openaiEndpoint: 'https://api.openai.com/v1',
+  openaiModel: 'gpt-4o-mini',
   openaiApiKey: '',
+  groqApiKey: '',
   ttsPitch: '+0Hz',
   ttsRate: '+0%',
   ttsProvider: 'edge-tts',
@@ -140,6 +146,107 @@ export async function pingGeminiConnection(
         // Fallback to HTTP status text
       }
 
+      return {
+        ok: false,
+        latencyMs,
+        error: errorMessage,
+      };
+    }
+
+    return {
+      ok: true,
+      latencyMs,
+    };
+  } catch (err) {
+    const latencyMs = Math.round(performance.now() - startTime);
+    return {
+      ok: false,
+      latencyMs,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface PingOpenAiResult {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+/**
+ * Normalizes OpenAI-compatible endpoint URL, ensuring it points to /chat/completions.
+ */
+export function normalizeEndpoint(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (trimmed.endsWith('/chat/completions')) {
+    return trimmed;
+  }
+  return `${trimmed}/chat/completions`;
+}
+
+/**
+ * Ping OpenAI-compatible API endpoint to verify connectivity, model existence, and optional API key.
+ *
+ * @param endpoint - Proxy or OpenAI endpoint base URL
+ * @param model - Model identifier (e.g. gpt-4o-mini, llama3)
+ * @param apiKey - Optional API key for authenticated proxies
+ * @param fetchFn - Optional custom fetch implementation (useful for mocking)
+ * @returns Object with ok status, round-trip latency in ms, and optional error message
+ */
+export async function pingOpenAiConnection(
+  endpoint: string,
+  model: string,
+  apiKey?: string,
+  fetchFn: (input: string | URL | Request, init?: RequestInit) => Promise<any> = globalThis.fetch,
+): Promise<PingOpenAiResult> {
+  if (!endpoint || !endpoint.trim()) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      error: 'Proxy endpoint URL is required',
+    };
+  }
+  if (!model || !model.trim()) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      error: 'Model identifier is required',
+    };
+  }
+
+  const normalizedUrl = normalizeEndpoint(endpoint);
+  const startTime = performance.now();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey && apiKey.trim()) {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+
+  try {
+    const response = await fetchFn(normalizedUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: model.trim(),
+        messages: [{ role: 'user', content: 'Ping' }],
+        max_tokens: 5,
+      }),
+    });
+
+    const latencyMs = Math.round(performance.now() - startTime);
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = (await response.json()) as { error?: { message?: string } };
+        if (errorData?.error?.message) {
+          errorMessage = errorData.error.message;
+        }
+      } catch {
+        // Fallback to HTTP status text
+      }
       return {
         ok: false,
         latencyMs,

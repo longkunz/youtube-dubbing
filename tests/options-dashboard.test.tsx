@@ -221,4 +221,73 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
       expect(screen.getByText(/0\.00 MB/i)).toBeInTheDocument();
     });
   });
+
+  it('switches between OpenAI-compatible proxy and Gemini translation providers', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    // Check translation provider selector exists
+    const providerSelect = screen.getByRole('combobox', { name: /translation provider/i });
+    expect(providerSelect).toBeInTheDocument();
+
+    // Switch to Gemini
+    fireEvent.change(providerSelect, { target: { value: 'gemini' } });
+    expect(providerSelect).toHaveValue('gemini');
+    expect(screen.getByTestId('gemini-key-input')).toBeInTheDocument();
+
+    // Switch to OpenAI-Compatible Proxy
+    fireEvent.change(providerSelect, { target: { value: 'openai-compatible' } });
+    expect(providerSelect).toHaveValue('openai-compatible');
+    expect(screen.getByTestId('openai-endpoint-input')).toBeInTheDocument();
+    expect(screen.getByTestId('openai-model-input')).toBeInTheDocument();
+    expect(screen.getByTestId('openai-key-input')).toBeInTheDocument();
+  });
+
+  it('saves OpenAI proxy settings to storage', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const providerSelect = screen.getByRole('combobox', { name: /translation provider/i });
+    fireEvent.change(providerSelect, { target: { value: 'openai-compatible' } });
+
+    const endpointInput = screen.getByTestId('openai-endpoint-input');
+    const modelInput = screen.getByTestId('openai-model-input');
+    const apiKeyInput = screen.getByTestId('openai-key-input');
+    const saveBtn = screen.getByRole('button', { name: /save credentials/i });
+
+    fireEvent.change(endpointInput, { target: { value: 'https://my-proxy.internal/v1' } });
+    fireEvent.change(modelInput, { target: { value: 'claude-3-haiku' } });
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-custom-123' } });
+    fireEvent.click(saveBtn);
+
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.translationProvider).toBe('openai-compatible');
+      expect(saved.openaiEndpoint).toBe('https://my-proxy.internal/v1');
+      expect(saved.openaiModel).toBe('claude-3-haiku');
+      expect(saved.openaiApiKey).toBe('sk-custom-123');
+    });
+  });
+
+  it('triggers OpenAI connection test and displays latency status', async () => {
+    const mockPingOpenAi = vi.fn().mockResolvedValue({
+      ok: true,
+      latencyMs: 88,
+    });
+
+    render(
+      <OptionsDashboard
+        segmentCache={segmentCache}
+        pingOpenAiFn={mockPingOpenAi}
+      />
+    );
+
+    const providerSelect = screen.getByRole('combobox', { name: /translation provider/i });
+    fireEvent.change(providerSelect, { target: { value: 'openai-compatible' } });
+
+    const pingBtn = screen.getByRole('button', { name: /test connection|ping connection/i });
+    fireEvent.click(pingBtn);
+
+    expect(mockPingOpenAi).toHaveBeenCalled();
+    expect(await screen.findByText(/ONLINE \(88ms\)/i)).toBeInTheDocument();
+  });
 });
+

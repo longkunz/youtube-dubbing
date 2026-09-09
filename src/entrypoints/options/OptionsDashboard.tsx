@@ -1,10 +1,12 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   getSettings,
   saveSettings,
   pingGeminiConnection,
+  pingOpenAiConnection,
   DEFAULT_USER_SETTINGS,
   type UserSettings,
+  type PingOpenAiResult,
 } from '../../storage/settings';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
 import {
@@ -26,13 +28,23 @@ import {
 export interface OptionsDashboardProps {
   segmentCache?: SegmentCache;
   pingFn?: (apiKey: string) => Promise<{ ok: boolean; latencyMs: number; error?: string }>;
+  pingOpenAiFn?: (
+    endpoint: string,
+    model: string,
+    apiKey?: string
+  ) => Promise<PingOpenAiResult>;
 }
 
 export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   segmentCache,
   pingFn,
+  pingOpenAiFn,
 }) => {
+  const [translationProvider, setTranslationProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [openaiEndpoint, setOpenaiEndpoint] = useState('https://api.openai.com/v1');
+  const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [groqApiKey, setGroqApiKey] = useState('');
   const [ttsProvider, setTtsProvider] = useState<'edge-tts' | 'web-speech'>('edge-tts');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
@@ -40,12 +52,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [enableFallback, setEnableFallback] = useState(true);
 
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showOpenAiKey, setShowOpenAiKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [pingStatus, setPingStatus] = useState<{
     loading: boolean;
-    result?: { ok: boolean; latencyMs: number; error?: string };
+    result?: { ok: boolean; latencyMs?: number; error?: string };
   } | null>(null);
 
   const [storageUsage, setStorageUsage] = useState<StorageUsageStats | null>(null);
@@ -58,7 +71,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
     getSettings().then((saved) => {
       if (!active) return;
+      setTranslationProvider(saved.translationProvider || 'gemini');
       setGeminiApiKey(saved.geminiApiKey || '');
+      setOpenaiEndpoint(saved.openaiEndpoint || 'https://api.openai.com/v1');
+      setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
+      setOpenaiApiKey(saved.openaiApiKey || '');
       setGroqApiKey(saved.groqApiKey || '');
       setTtsProvider(saved.ttsProvider || 'edge-tts');
       setTtsPitch(saved.ttsPitch || '+0Hz');
@@ -89,7 +106,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
   const handleSaveCredentials = async () => {
     await saveSettings({
+      translationProvider,
       geminiApiKey,
+      openaiEndpoint,
+      openaiModel,
+      openaiApiKey,
       groqApiKey,
       ttsProvider,
       ttsPitch,
@@ -104,10 +125,16 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
   const handlePing = async () => {
     setPingStatus({ loading: true });
-    const pingExecutor = pingFn ?? pingGeminiConnection;
     try {
-      const res = await pingExecutor(geminiApiKey);
-      setPingStatus({ loading: false, result: res });
+      if (translationProvider === 'openai-compatible') {
+        const pingExecutor = pingOpenAiFn ?? pingOpenAiConnection;
+        const res = await pingExecutor(openaiEndpoint, openaiModel, openaiApiKey);
+        setPingStatus({ loading: false, result: res });
+      } else {
+        const pingExecutor = pingFn ?? pingGeminiConnection;
+        const res = await pingExecutor(geminiApiKey);
+        setPingStatus({ loading: false, result: res });
+      }
     } catch (err) {
       setPingStatus({
         loading: false,
@@ -187,38 +214,135 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
             </div>
 
             <div className="space-y-5">
-              {/* Gemini API Key */}
+              {/* Translation Provider Selector */}
               <div>
                 <label
-                  htmlFor="gemini-key"
+                  htmlFor="translation-provider-select"
                   className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
                 >
-                  Gemini API Key (Primary Dubbing Engine)
+                  Translation Provider
                 </label>
-                <div className="relative flex items-center">
-                  <input
-                    id="gemini-key"
-                    data-testid="gemini-key-input"
-                    type={showGeminiKey ? 'text' : 'password'}
-                    value={geminiApiKey}
-                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                    placeholder="AIzaSy..."
-                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Toggle Gemini API Key visibility"
-                    onClick={() => setShowGeminiKey((prev) => !prev)}
-                    className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                  >
-                    {showGeminiKey ? (
-                      <EyeOff className="w-4 h-4" />
-                    ) : (
-                      <Eye className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
+                <select
+                  id="translation-provider-select"
+                  aria-label="Translation Provider"
+                  value={translationProvider}
+                  onChange={(e) =>
+                    setTranslationProvider(e.target.value as 'gemini' | 'openai-compatible')
+                  }
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                >
+                  <option value="openai-compatible">OpenAI-Compatible Proxy (/v1/chat/completions)</option>
+                  <option value="gemini">Google Gemini (Direct REST)</option>
+                </select>
               </div>
+
+              {translationProvider === 'openai-compatible' ? (
+                <>
+                  {/* OpenAI Proxy Endpoint URL */}
+                  <div>
+                    <label
+                      htmlFor="openai-endpoint"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      Proxy Endpoint URL
+                    </label>
+                    <input
+                      id="openai-endpoint"
+                      data-testid="openai-endpoint-input"
+                      type="text"
+                      value={openaiEndpoint}
+                      onChange={(e) => setOpenaiEndpoint(e.target.value)}
+                      placeholder="https://api.openai.com/v1"
+                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                    />
+                  </div>
+
+                  {/* OpenAI Model Identifier */}
+                  <div>
+                    <label
+                      htmlFor="openai-model"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      Model Identifier
+                    </label>
+                    <input
+                      id="openai-model"
+                      data-testid="openai-model-input"
+                      type="text"
+                      value={openaiModel}
+                      onChange={(e) => setOpenaiModel(e.target.value)}
+                      placeholder="gpt-4o-mini"
+                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                    />
+                  </div>
+
+                  {/* OpenAI Proxy API Key (Optional) */}
+                  <div>
+                    <label
+                      htmlFor="openai-key"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      API Key (Optional)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        id="openai-key"
+                        data-testid="openai-key-input"
+                        type={showOpenAiKey ? 'text' : 'password'}
+                        value={openaiApiKey}
+                        onChange={(e) => setOpenaiApiKey(e.target.value)}
+                        placeholder="sk-... (leave empty if proxy requires no key)"
+                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Toggle OpenAI API Key visibility"
+                        onClick={() => setShowOpenAiKey((prev) => !prev)}
+                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+                      >
+                        {showOpenAiKey ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Gemini API Key */
+                <div>
+                  <label
+                    htmlFor="gemini-key"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Gemini API Key (Primary Dubbing Engine)
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      id="gemini-key"
+                      data-testid="gemini-key-input"
+                      type={showGeminiKey ? 'text' : 'password'}
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Toggle Gemini API Key visibility"
+                      onClick={() => setShowGeminiKey((prev) => !prev)}
+                      className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+                    >
+                      {showGeminiKey ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Groq / OpenAI API Key */}
               <div>
@@ -267,12 +391,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
                   <button
                     type="button"
+                    aria-label="Ping Connection (Test Connection)"
                     onClick={handlePing}
                     disabled={pingStatus?.loading}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer disabled:opacity-50"
                   >
                     <Activity className={`w-3.5 h-3.5 ${pingStatus?.loading ? 'animate-spin' : ''}`} />
-                    Ping Connection
+                    Test Connection
                   </button>
                 </div>
 

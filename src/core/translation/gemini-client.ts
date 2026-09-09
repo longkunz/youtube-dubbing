@@ -1,12 +1,12 @@
 import type { Segment, Transcript } from '../../types/domain';
 import { TranslationError, TranslationErrorCode } from './errors';
+import type { TranslationClient, TranslateOptions, FetchFn } from './types';
+
+export type { TranslationClient, TranslateOptions, FetchFn };
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/** Minimal fetch function signature compatible with both global fetch and vi.fn() mocks. */
-export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<any>;
 
 export interface GeminiTranslationClientOptions {
   /** Explicit Gemini API key. When omitted the client reads from chrome.storage.local. */
@@ -18,11 +18,6 @@ export interface GeminiTranslationClientOptions {
    * Pass a mock in tests to avoid real HTTP calls.
    */
   fetchFn?: FetchFn;
-}
-
-export interface TranslateOptions {
-  /** Target translation language code (BCP-47). Defaults to "vi". */
-  targetLanguage?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +107,7 @@ async function readApiKeyFromStorage(): Promise<string | undefined> {
  * Architecture: ADR-0001 (100% client-side BYOK — direct fetch to Gemini REST, no server).
  * Strategy: ADR-0003 (full upfront batch translation with gemini-2.0-flash).
  */
-export class GeminiTranslationClient {
+export class GeminiTranslationClient implements TranslationClient {
   private readonly apiKey: string | undefined;
   readonly model: string;
   private readonly fetchFn: FetchFn;

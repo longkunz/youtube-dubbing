@@ -9,6 +9,7 @@ export default defineConfig({
     version: '1.0.0',
     permissions: ['storage'],
     host_permissions: [
+      '*://*/*',
       '*://*.youtube.com/*',
       'https://speech.platform.bing.com/*',
       'wss://speech.platform.bing.com/*',
