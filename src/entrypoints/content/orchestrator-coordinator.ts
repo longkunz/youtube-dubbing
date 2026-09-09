@@ -22,12 +22,14 @@ export interface CoordinatorState {
   activeVideoId: string | null;
   orchestrator: DubbingOrchestratorImpl | null;
   cleanupListeners: (() => void) | null;
+  isInitializing: boolean;
 }
 
 const state: CoordinatorState = {
   activeVideoId: null,
   orchestrator: null,
   cleanupListeners: null,
+  isInitializing: false,
 };
 
 export function getCoordinatorState(): CoordinatorState {
@@ -109,6 +111,14 @@ export async function translateViaBackground(
       return reject(new Error('chrome.runtime.sendMessage unavailable'));
     }
 
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('Translation request timed out after 30s'));
+      }
+    }, 30000);
+
     chrome.runtime.sendMessage(
       {
         action: 'TRANSLATE_SEGMENTS',
@@ -117,6 +127,10 @@ export async function translateViaBackground(
         settings,
       },
       (res: any) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+
         if (chrome.runtime?.lastError) {
           return reject(new Error(chrome.runtime.lastError.message));
         }
@@ -175,9 +189,15 @@ export async function startDubbingPipeline(
     return state.orchestrator;
   }
 
+  // Prevent concurrent in-flight pipeline launches for the same video
+  if (state.isInitializing && state.activeVideoId === videoId) {
+    return null;
+  }
+
   // Clean up any stale orchestrator
   stopDubbingPipeline();
   state.activeVideoId = videoId;
+  state.isInitializing = true;
 
   console.log('[AetherDub] Starting dubbing pipeline for video:', videoId);
 
@@ -278,5 +298,7 @@ export async function startDubbingPipeline(
   } catch (err: any) {
     console.error('[AetherDub] Dubbing pipeline initialization failed:', err);
     return null;
+  } finally {
+    state.isInitializing = false;
   }
 }

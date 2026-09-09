@@ -31,6 +31,14 @@ export class BackgroundDubbingTtsClient implements DubbingTtsClient {
     }
 
     return new Promise<Blob>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error('TTS synthesis timed out after 20s'));
+        }
+      }, 20000);
+
       chrome.runtime.sendMessage(
         {
           action: 'SYNTHESIZE_TTS',
@@ -39,6 +47,10 @@ export class BackgroundDubbingTtsClient implements DubbingTtsClient {
           options: { pitch: options?.pitch, rate: options?.rate },
         },
         (response: any) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+
           if (chrome.runtime?.lastError) {
             return reject(new Error(chrome.runtime.lastError.message));
           }
