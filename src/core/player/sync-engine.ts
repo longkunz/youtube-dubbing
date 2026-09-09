@@ -70,12 +70,16 @@ export class PlaybackSyncEngine {
 
     this.onSpeechEnd = handleEnd;
     audio.addEventListener('ended', handleEnd, { once: true });
+    audio.addEventListener('error', () => {
+      console.error(`[AetherDub] Dub Track <audio> error for segment ${segment.id}:`, audio.error);
+      handleEnd();
+    });
 
     this.emit('speechstart');
     const playResult = audio.play();
     if (playResult !== undefined) {
-      playResult.catch(() => {
-        // Autoplay may be blocked in some environments — treat as ended.
+      playResult.catch((err) => {
+        console.warn(`[AetherDub] Dub Track audio.play() rejected for segment ${segment.id}:`, err);
         handleEnd();
       });
     }

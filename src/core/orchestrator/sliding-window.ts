@@ -33,6 +33,13 @@ export class SlidingWindow {
   }
 
   /**
+   * Check whether a segment has already been marked for synthesis.
+   */
+  hasSynthesized(segmentId: string): boolean {
+    return this.synthesizedIds.has(segmentId);
+  }
+
+  /**
    * Mark a segment as having been dispatched for synthesis.
    */
   markSynthesized(segmentId: string): void {

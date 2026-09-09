@@ -665,6 +665,15 @@ export async function startDubbingPipeline(
       diarizationEnabled: false,
     });
 
+    // ── 4b. Prime initial lookahead audio (ADR-0008) ──────────────────────
+    if (orchestrator.primeInitialLookahead) {
+      try {
+        await orchestrator.primeInitialLookahead(video.currentTime);
+      } catch (primeErr) {
+        console.warn('[AetherDub] Lookahead priming warning:', primeErr);
+      }
+    }
+
     state.orchestrator = orchestrator;
 
     // ── 5. Update HUD ─────────────────────────────────────────────────────
@@ -898,6 +907,14 @@ async function _initOrchestrator(
     lookaheadSeconds: 60,
     diarizationEnabled: false,
   });
+
+  if (orchestrator.primeInitialLookahead) {
+    try {
+      await orchestrator.primeInitialLookahead(video.currentTime);
+    } catch (primeErr) {
+      console.warn('[AetherDub] Lookahead priming warning:', primeErr);
+    }
+  }
 
   state.orchestrator = orchestrator;
   instance.updateOrchestrator?.(orchestrator);

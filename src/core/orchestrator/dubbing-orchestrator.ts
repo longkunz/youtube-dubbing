@@ -136,8 +136,56 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
           activeSegment.duration,
           this._playbackRate,
         );
+        console.log(
+          `[AetherDub] Playing segment ${activeSegment.id} at ${currentTime.toFixed(2)}s (rate ${rate.toFixed(2)})`
+        );
         this.syncEngine.playSegment(activeSegment, activeSegment.audioBlob, rate);
         this.ducker.duck();
+      }
+    } else if (activeSegment && !activeSegment.audioBlob && !this.slidingWindow.hasSynthesized(activeSegment.id)) {
+      // Active segment at playhead has no audio yet and hasn't been queued — synthesize immediately!
+      this.slidingWindow.markSynthesized(activeSegment.id);
+      if (this.ttsClient) {
+        const voice = this.resolveVoiceForSegment(activeSegment);
+        activeSegment.voiceProfileId = voice;
+        const text = activeSegment.translatedText ?? activeSegment.sourceText;
+        this.ttsClient
+          .synthesize(text, { voice })
+          .then((blob) => {
+            if (!blob || blob.size === 0) {
+              this.reportTtsFailure(activeSegment.id, 'Edge TTS returned empty audio');
+              return;
+            }
+            activeSegment.audioBlob = blob;
+            if (!this.ttsSuccessLogged) {
+              this.ttsSuccessLogged = true;
+              console.info(
+                `[AetherDub] Dub TTS audio ready (seg ${activeSegment.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
+              );
+            } else {
+              console.log(
+                `[AetherDub] Dub TTS audio ready (seg ${activeSegment.id}, ${(blob.size / 1024).toFixed(1)} KB)`
+              );
+            }
+            // If playhead is still inside this segment, begin playback immediately
+            const curTime = this.media.currentTime;
+            if (this.findSegmentAt(curTime)?.id === activeSegment.id && this._activeSegmentId !== activeSegment.id) {
+              this._activeSegmentId = activeSegment.id;
+              const rate = this.stretcher.calculateRate(
+                this.estimateAudioDuration(blob, activeSegment.duration),
+                activeSegment.duration,
+                this._playbackRate,
+              );
+              console.log(
+                `[AetherDub] Playing segment ${activeSegment.id} upon synthesis completion at ${curTime.toFixed(2)}s`
+              );
+              this.syncEngine.playSegment(activeSegment, blob, rate);
+              this.ducker.duck();
+            }
+          })
+          .catch((err) => {
+            this.reportTtsFailure(activeSegment.id, err?.message || String(err));
+          });
       }
     } else if ((!activeSegment || !activeSegment.audioBlob) && this._activeSegmentId !== null) {
       // Exited a segment into silence, OR entered an audio-less segment.
@@ -172,6 +220,25 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
                 console.info(
                   `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
                 );
+              } else {
+                console.log(
+                  `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB)`
+                );
+              }
+              // If playback has reached this segment while it was synthesizing:
+              const curTime = this.media.currentTime;
+              if (this.findSegmentAt(curTime)?.id === seg.id && this._activeSegmentId !== seg.id) {
+                this._activeSegmentId = seg.id;
+                const rate = this.stretcher.calculateRate(
+                  this.estimateAudioDuration(blob, seg.duration),
+                  seg.duration,
+                  this._playbackRate,
+                );
+                console.log(
+                  `[AetherDub] Playing segment ${seg.id} upon synthesis completion at ${curTime.toFixed(2)}s`
+                );
+                this.syncEngine.playSegment(seg, blob, rate);
+                this.ducker.duck();
               }
             })
             .catch((err) => {
@@ -291,6 +358,36 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       return blob;
     }
     return undefined;
+  }
+
+  /**
+   * Prime initial lookahead audio around currentTime before video resumes.
+   * Synthesizes the active segment at currentTime (or the next 1-2 upcoming segments)
+   * so audio is ready to play immediately upon playback resume without race conditions.
+   */
+  async primeInitialLookahead(currentTime: number): Promise<void> {
+    if (!this.transcript || !this.ttsClient) return;
+
+    // Find the current active segment, or the next upcoming segments in next 15s
+    const candidateSegments = this.transcript.segments.filter(
+      (seg) => seg.endTime > currentTime && seg.startTime <= currentTime + 15
+    );
+
+    const toPrime = candidateSegments.slice(0, 2);
+    if (toPrime.length === 0) return;
+
+    console.log(`[AetherDub] Priming initial lookahead TTS for ${toPrime.length} segment(s)...`);
+    await Promise.allSettled(
+      toPrime.map(async (seg) => {
+        this.slidingWindow.markSynthesized(seg.id);
+        const blob = await this.synthesizeSegment(seg);
+        if (blob) {
+          console.log(
+            `[AetherDub] Primed initial audio for segment ${seg.id} (${(blob.size / 1024).toFixed(1)} KB)`
+          );
+        }
+      })
+    );
   }
 
   getState(): OrchestratorState {

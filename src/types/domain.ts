@@ -140,6 +140,7 @@ export interface DubbingOrchestrator {
   isDucked?(): boolean;
   setDiarizationEnabled?(enabled: boolean): void;
   isDiarizationEnabled?(): boolean;
+  primeInitialLookahead?(currentTime: number): Promise<void>;
   getState(): OrchestratorState;
   destroy(): void;
 }
