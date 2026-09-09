@@ -33,6 +33,7 @@ class MockWebSocket implements WebSocketLike {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
+  binaryType = 'blob';
 
   readonly sentMessages: (string | ArrayBuffer | Blob)[] = [];
   private _closed = false;
@@ -305,7 +306,45 @@ describe('EdgeTtsClient', () => {
       await synthPromise;
 
       expect(capturedUrls[0]).toContain('speech.platform.bing.com');
-      expect(capturedUrls[0]).toContain('trustedclienttoken');
+      expect(capturedUrls[0]).toContain('synthesize/readaloud/edge/v1');
+      expect(capturedUrls[0]).toContain('TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4');
+      expect(capturedUrls[0]).toContain('ConnectionId=');
+      expect(capturedUrls[0]).toMatch(/Sec-MS-GEC=[0-9A-F]{64}/);
+      expect(capturedUrls[0]).toContain('Sec-MS-GEC-Version=');
+    });
+
+    it('uses the injected GEC generator for deterministic URLs', async () => {
+      const capturedUrls: string[] = [];
+      const capturingFactory = (url: string): WebSocketLike => {
+        capturedUrls.push(url);
+        return mockFactory.factory(url);
+      };
+
+      const client = new EdgeTtsClient({
+        webSocketFactory: capturingFactory,
+        secMsGecGenerator: () => 'INJECTEDGEC',
+      });
+      const synthPromise = client.synthesize('Hi', FEMALE_VOICE);
+      await waitUntil(() => mockFactory.handles.length > 0);
+      mockFactory.handles[0].open();
+      mockFactory.handles[0].sendText('Path:turn.end\r\n\r\n');
+      await synthPromise;
+
+      expect(capturedUrls[0]).toContain('Sec-MS-GEC=INJECTEDGEC');
+    });
+
+    it('requests arraybuffer binary frames so audio chunks are parsed', async () => {
+      const { factory, handles } = mockFactory;
+      const client = new EdgeTtsClient({ webSocketFactory: factory });
+
+      const synthPromise = client.synthesize('Hi', FEMALE_VOICE);
+      await waitUntil(() => handles.length > 0);
+
+      expect(handles[0].ws.binaryType).toBe('arraybuffer');
+
+      handles[0].open();
+      handles[0].sendText('Path:turn.end\r\n\r\n');
+      await synthPromise;
     });
   });
 

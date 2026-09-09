@@ -1,9 +1,16 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { mountHud, HudInstance } from './mount';
-import { startDubbingPipeline, stopDubbingPipeline } from './orchestrator-coordinator';
+import { stopDubbingPipeline } from './orchestrator-coordinator';
 
 let activeInstance: HudInstance | null = null;
 
+/**
+ * Mount the in-player HUD into the YouTube toolbar in a dormant (DUB: OFF) state.
+ *
+ * Per ADR-0008 (On-Demand Activation): this function NO LONGER automatically
+ * starts the dubbing pipeline. The pipeline is only triggered when the user
+ * explicitly activates dubbing via the Split Pill Control.
+ */
 export function tryMount(): HudInstance | null {
   const controls = document.querySelector('.ytp-right-controls') as HTMLElement | null;
   if (!controls) {
@@ -15,19 +22,21 @@ export function tryMount(): HudInstance | null {
     return null;
   }
 
+  // Already mounted and host element still present — return the existing instance.
+  // Do NOT restart the pipeline on re-check.
   if (activeInstance && activeInstance.isMounted() && controls.querySelector('[data-aetherdub-host]')) {
-    startDubbingPipeline(activeInstance).catch(() => {});
     return activeInstance;
   }
 
+  // Stale instance (e.g. after SPA navigation unmounted the host element)
   if (activeInstance) {
     activeInstance.unmount();
     activeInstance = null;
     stopDubbingPipeline();
   }
 
+  // Mount fresh — in dormant state, no pipeline launch
   activeInstance = mountHud(controls);
-  startDubbingPipeline(activeInstance).catch(() => {});
   return activeInstance;
 }
 
@@ -45,9 +54,19 @@ export default defineContentScript({
   main() {
     tryMount();
 
-    // YouTube SPA navigation events
+    // YouTube SPA navigation events — remount HUD in dormant state,
+    // do NOT auto-start pipeline (On-Demand Activation, ADR-0008).
     window.addEventListener('yt-navigate-finish', () => {
       tryMount();
+    });
+
+    // MAIN-world bridge ready — previously used to trigger pipeline.
+    // Now: only remount HUD if it wasn't already mounted (e.g. race condition
+    // where bridge fires before player controls appeared). Do NOT start pipeline.
+    document.addEventListener('aetherdub:player-response-ready', () => {
+      if (!activeInstance) {
+        tryMount();
+      }
     });
 
     // Observer for dynamic player bar appearance/hydration

@@ -29,6 +29,8 @@ export interface CyberCockpitProps {
   isPlaying?: boolean;
   isDucked?: boolean;
   onOpenSettings?: () => void;
+  /** Translation engine badge (e.g. GEMINI-2.0, GPT-4O-MINI). Defaults to GEMINI-2.0. */
+  engineLabel?: string;
 }
 
 export const CyberCockpit: React.FC<CyberCockpitProps> = ({
@@ -47,6 +49,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   isPlaying = false,
   isDucked = false,
   onOpenSettings,
+  engineLabel = 'GEMINI-2.0',
 }) => {
   const [internalVoice, setInternalVoice] = useState('vi-VN-HoaiMyNeural');
   const [internalMultiSpeaker, setInternalMultiSpeaker] = useState(isMultiSpeakerEnabled);
@@ -191,7 +194,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
       <div className="telemetry-row">
         <div className="telemetry-card">
           <div className="telemetry-label">Engine</div>
-          <div className="telemetry-value">GEMINI-2.0</div>
+          <div className="telemetry-value">{engineLabel}</div>
         </div>
         <div className="telemetry-card">
           <div className="telemetry-label">Target Lang</div>

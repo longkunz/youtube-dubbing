@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   getSettings,
   saveSettings,
@@ -9,6 +9,13 @@ import {
   type PingOpenAiResult,
 } from '../../storage/settings';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
+import { BackgroundDubbingTtsClient } from '../../core/tts/background-tts-client';
+import {
+  playAudioBlob,
+  TTS_PREVIEW_TEXT,
+  type PreviewAudio,
+  type PreviewPlayback,
+} from '../../core/tts/tts-preview';
 import {
   Key,
   Cpu,
@@ -33,12 +40,25 @@ export interface OptionsDashboardProps {
     model: string,
     apiKey?: string
   ) => Promise<PingOpenAiResult>;
+  /** Injectable Edge-TTS client for the voice preview (defaults to background proxy). */
+  ttsPreviewClient?: {
+    synthesize(
+      text: string,
+      options?: { voice?: string; rate?: string; pitch?: string }
+    ): Promise<Blob>;
+  };
+  /** Injectable audio factory for the voice preview (defaults to `new Audio(url)`). */
+  createPreviewAudio?: (url: string) => PreviewAudio;
 }
+
+export type TtsPreviewPhase = 'idle' | 'synthesizing' | 'playing' | 'success' | 'error';
 
 export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   segmentCache,
   pingFn,
   pingOpenAiFn,
+  ttsPreviewClient,
+  createPreviewAudio,
 }) => {
   const [translationProvider, setTranslationProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [geminiApiKey, setGeminiApiKey] = useState('');
@@ -63,6 +83,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
   const [storageUsage, setStorageUsage] = useState<StorageUsageStats | null>(null);
   const [isPurging, setIsPurging] = useState(false);
+
+  const [ttsPreview, setTtsPreview] = useState<{
+    phase: TtsPreviewPhase;
+    detail?: string;
+  }>({ phase: 'idle' });
+  const previewPlaybackRef = useRef<PreviewPlayback | null>(null);
+  const previewRunIdRef = useRef(0);
 
   const cache = segmentCache ?? new SegmentCache();
 
@@ -155,6 +182,69 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setStorageUsage(updated);
     } finally {
       setIsPurging(false);
+    }
+  };
+
+  const stopTtsPreview = () => {
+    previewRunIdRef.current += 1;
+    previewPlaybackRef.current?.stop();
+    previewPlaybackRef.current = null;
+  };
+
+  // Stop any in-flight preview when the dashboard unmounts.
+  useEffect(() => {
+    return () => {
+      previewPlaybackRef.current?.stop();
+      previewPlaybackRef.current = null;
+    };
+  }, []);
+
+  /**
+   * End-to-end Edge-TTS check: synthesize a short Vietnamese sample through
+   * the background service worker and actually play it back. If the user
+   * hears the voice, Edge TTS synthesis + delivery + audio output all work.
+   */
+  const handlePreviewVoice = async () => {
+    // Clicking while playing stops the current preview.
+    if (ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing') {
+      stopTtsPreview();
+      setTtsPreview({ phase: 'idle' });
+      return;
+    }
+
+    const runId = previewRunIdRef.current + 1;
+    previewRunIdRef.current = runId;
+    setTtsPreview({ phase: 'synthesizing' });
+
+    try {
+      const client = ttsPreviewClient ?? new BackgroundDubbingTtsClient();
+      const blob = await client.synthesize(TTS_PREVIEW_TEXT, {
+        voice: 'vi-VN-HoaiMyNeural',
+        pitch: ttsPitch,
+        rate: ttsRate,
+      });
+      if (previewRunIdRef.current !== runId) return;
+      if (!blob || blob.size === 0) {
+        throw new Error('Edge TTS returned empty audio');
+      }
+
+      const playback = playAudioBlob(
+        blob,
+        createPreviewAudio ?? ((url: string) => new Audio(url) as unknown as PreviewAudio)
+      );
+      previewPlaybackRef.current = playback;
+      setTtsPreview({ phase: 'playing' });
+      await playback.ended;
+      if (previewRunIdRef.current !== runId) return;
+      previewPlaybackRef.current = null;
+      setTtsPreview({ phase: 'success', detail: `${(blob.size / 1024).toFixed(1)} KB played` });
+    } catch (err) {
+      if (previewRunIdRef.current !== runId) return;
+      const message = err instanceof Error ? err.message : String(err);
+      // User-initiated stop is not an error.
+      if (/stopped by user/i.test(message)) return;
+      previewPlaybackRef.current = null;
+      setTtsPreview({ phase: 'error', detail: message });
     }
   };
 
@@ -506,6 +596,46 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 >
                   Enable Web Speech API Fallback upon Edge-TTS Failure
                 </label>
+              </div>
+
+              {/* Edge-TTS Voice Preview */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-800">
+                <p className="text-xs font-sans text-gray-400 max-w-md">
+                  Synthesizes a short Vietnamese sample through Edge TTS and plays it back.
+                  If you hear the voice, synthesis and audio output both work.
+                </p>
+                <div className="flex items-center gap-3">
+                  {ttsPreview.phase === 'success' && (
+                    <span className="px-3 py-1 rounded border border-[#00ff88]/60 bg-[#00ff88]/15 text-[#00ff88] font-mono text-xs font-bold shadow-[0_0_10px_rgba(0,255,136,0.3)] animate-in fade-in">
+                      PLAYBACK OK{ttsPreview.detail ? ` (${ttsPreview.detail})` : ''}
+                    </span>
+                  )}
+                  {ttsPreview.phase === 'error' && (
+                    <span className="px-3 py-1 rounded border border-[#ff007a]/60 bg-[#ff007a]/15 text-[#ff007a] font-mono text-xs font-bold shadow-[0_0_10px_rgba(255,0,122,0.3)] animate-in fade-in">
+                      ERROR: {ttsPreview.detail || 'Preview failed'}
+                    </span>
+                  )}
+                  {(ttsPreview.phase === 'synthesizing' || ttsPreview.phase === 'playing') && (
+                    <span className="px-3 py-1 rounded border border-[#00f2fe]/60 bg-[#00f2fe]/15 text-[#00f2fe] font-mono text-xs font-bold animate-pulse">
+                      {ttsPreview.phase === 'synthesizing' ? 'SYNTHESIZING…' : 'PLAYING… TAP TO STOP'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={
+                      ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing'
+                        ? 'Stop preview'
+                        : 'Preview Edge TTS voice'
+                    }
+                    onClick={handlePreviewVoice}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#ff007a]/40 hover:border-[#ff007a] bg-[#ff007a]/10 hover:bg-[#ff007a]/20 text-[#ff007a] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
+                  >
+                    <Radio className="w-3.5 h-3.5" />
+                    {ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing'
+                      ? 'Stop Preview'
+                      : 'Preview Voice'}
+                  </button>
+                </div>
               </div>
             </div>
           </section>

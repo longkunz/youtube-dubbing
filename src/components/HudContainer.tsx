@@ -3,6 +3,7 @@ import { FloatingPill } from './FloatingPill';
 import { CyberCockpit } from './CyberCockpit';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import { NotificationBanner } from './NotificationBanner';
+import { PreparationOverlay, type PreparationOverlayMode } from './PreparationOverlay';
 
 import type { DubbingOrchestrator, Segment, VoiceProfile } from '../types/domain';
 import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from '../core/tts/voices';
@@ -10,6 +11,7 @@ import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from '../core/tts/voice
 export interface HudContainerProps {
   orchestrator?: DubbingOrchestrator;
   initialIsOpen?: boolean;
+  /** Per ADR-0008: defaults to false when uninitialized, true if orchestrator already provided. */
   initialIsEnabled?: boolean;
   initialTargetLanguage?: string;
   initialVoiceId?: string;
@@ -20,6 +22,8 @@ export interface HudContainerProps {
   // Direct overrides (for testing or declarative use)
   isOpen?: boolean;
   isEnabled?: boolean;
+  isPreparing?: boolean;
+  preparationMode?: PreparationOverlayMode | null;
   targetLanguage?: string;
   selectedVoiceId?: string;
   duckLevel?: number;
@@ -34,13 +38,34 @@ export interface HudContainerProps {
   hasCaptions?: boolean;
   isNoCaptions?: boolean;
   onConfigureSettings?: () => void;
-}
 
+  /** Translation engine badge shown in the cockpit telemetry row. */
+  engineLabel?: string;
+
+  /**
+   * Called when the user clicks the primary pill hit area to enable dubbing.
+   * The caller (HudInstance / mount.tsx) is responsible for running activateDubbing().
+   */
+  onActivateDubbing?: () => void;
+  /**
+   * Called when the user disables dubbing via the pill or cockpit toggle.
+   * The caller is responsible for running deactivateDubbing() / cleanup.
+   */
+  onDeactivateDubbing?: () => void;
+  /**
+   * Called when the user cancels during PreparationOverlay.
+   */
+  onCancelPreparation?: () => void;
+  /**
+   * Called when the user clicks the resume button on PreparationOverlay in autoplay-blocked mode.
+   */
+  onResumePlayback?: () => void;
+}
 
 export const HudContainer: React.FC<HudContainerProps> = ({
   orchestrator,
   initialIsOpen = false,
-  initialIsEnabled = true,
+  initialIsEnabled,
   initialTargetLanguage = 'vi',
   initialVoiceId = 'vi-VN-HoaiMyNeural',
   initialDuckLevel = 0.2,
@@ -48,6 +73,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   initialIsMultiSpeakerEnabled = false,
   isOpen: controlledIsOpen,
   isEnabled: controlledIsEnabled,
+  isPreparing: controlledIsPreparing,
+  preparationMode: controlledPreparationMode,
   targetLanguage: controlledTargetLanguage,
   selectedVoiceId: controlledSelectedVoiceId,
   duckLevel: controlledDuckLevel,
@@ -60,9 +87,17 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   hasCaptions,
   isNoCaptions,
   onConfigureSettings,
+  engineLabel,
+  onActivateDubbing,
+  onDeactivateDubbing,
+  onCancelPreparation,
+  onResumePlayback,
 }) => {
   const [isOpenState, setIsOpenState] = useState(initialIsOpen);
-  const [isEnabledState, setIsEnabledState] = useState(initialIsEnabled);
+  // Default to true if orchestrator passed directly, false for passive mount (no orchestrator)
+  const defaultEnabled = initialIsEnabled !== undefined ? initialIsEnabled : Boolean(orchestrator);
+  const [isEnabledState, setIsEnabledState] = useState(defaultEnabled);
+  const [isPreparingState, setIsPreparingState] = useState(false);
   const [targetLanguageState, setTargetLanguageState] = useState(initialTargetLanguage);
   const [selectedVoiceIdState, setSelectedVoiceIdState] = useState(initialVoiceId);
   const [duckLevelState, setDuckLevelState] = useState(initialDuckLevel);
@@ -82,7 +117,6 @@ export const HudContainer: React.FC<HudContainerProps> = ({
       setIsBannerDismissed(false);
     }
   }, [captionsAvailable]);
-
 
   // Sync with orchestrator if available
   useEffect(() => {
@@ -121,6 +155,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
 
   const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : isOpenState;
   const isEnabled = controlledIsEnabled !== undefined ? controlledIsEnabled : isEnabledState;
+  const isPreparing = controlledIsPreparing !== undefined ? controlledIsPreparing : isPreparingState;
   const targetLanguage = controlledTargetLanguage !== undefined ? controlledTargetLanguage : targetLanguageState;
   const selectedVoiceId = controlledSelectedVoiceId !== undefined ? controlledSelectedVoiceId : selectedVoiceIdState;
   const duckLevel = controlledDuckLevel !== undefined ? controlledDuckLevel : duckLevelState;
@@ -129,6 +164,15 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const isDucked = controlledIsDucked !== undefined ? controlledIsDucked : isDuckedState;
   const isMultiSpeaker = controlledIsMultiSpeaker !== undefined ? controlledIsMultiSpeaker : isMultiSpeakerState;
 
+  // Derive active preparation mode for overlay
+  const effectivePreparationMode: PreparationOverlayMode | null =
+    controlledPreparationMode !== undefined
+      ? controlledPreparationMode
+      : isPreparing
+        ? 'preparing'
+        : null;
+
+  /** Toggle Cyber Cockpit open/close (secondary pill button) */
   const handleToggle = () => {
     setIsOpenState((prev) => !prev);
   };
@@ -137,15 +181,51 @@ export const HudContainer: React.FC<HudContainerProps> = ({
     setIsOpenState(false);
   };
 
+  /**
+   * Split Pill primary action — toggle dubbing ON or OFF.
+   */
+  const handleToggleDubbing = () => {
+    if (isEnabled || isPreparing) {
+      // Turn OFF
+      setIsEnabledState(false);
+      setIsPreparingState(false);
+      onDeactivateDubbing?.();
+    } else {
+      // Turn ON — caller handles actual pipeline launch
+      onActivateDubbing?.();
+    }
+  };
+
+  /** Cockpit toggle for the "Dub Track Audio" switch inside CyberCockpit */
   const handleToggleEnabled = (enabled: boolean) => {
-    setIsEnabledState(enabled);
-    if (orchestrator) {
-      if (!enabled) {
-        orchestrator.handlePause();
-      } else {
+    if (enabled) {
+      setIsEnabledState(true);
+      if (orchestrator) {
         orchestrator.handlePlay();
       }
+      onActivateDubbing?.();
+    } else {
+      setIsEnabledState(false);
+      setIsPreparingState(false);
+      onDeactivateDubbing?.();
+      if (orchestrator) {
+        orchestrator.handlePause();
+      }
     }
+  };
+
+  const handleCancelPreparation = () => {
+    setIsPreparingState(false);
+    setIsEnabledState(false);
+    if (onCancelPreparation) {
+      onCancelPreparation();
+    } else {
+      onDeactivateDubbing?.();
+    }
+  };
+
+  const handleResumePlayback = () => {
+    onResumePlayback?.();
   };
 
   const handleToggleMultiSpeaker = (enabled: boolean) => {
@@ -209,7 +289,13 @@ export const HudContainer: React.FC<HudContainerProps> = ({
           onDismiss={() => setIsBannerDismissed(true)}
         />
       )}
-      <FloatingPill isOpen={isOpen} onToggle={handleToggle} />
+      <FloatingPill
+        isOpen={isOpen}
+        isEnabled={isEnabled}
+        isPreparing={isPreparing}
+        onToggleDubbing={handleToggleDubbing}
+        onToggleCockpit={handleToggle}
+      />
 
       <CyberCockpit
         isOpen={isOpen}
@@ -227,12 +313,21 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         isPlaying={isPlaying}
         isDucked={isDucked}
         onOpenSettings={handleOpenSettings}
+        engineLabel={engineLabel}
       />
       <SubtitleOverlay
         segment={activeSegment}
         visible={isEnabled}
         showOriginalText={showOriginalText}
       />
+
+      {effectivePreparationMode && (
+        <PreparationOverlay
+          mode={effectivePreparationMode}
+          onCancel={handleCancelPreparation}
+          onResume={handleResumePlayback}
+        />
+      )}
     </div>
   );
 };

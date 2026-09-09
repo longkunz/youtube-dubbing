@@ -1,10 +1,14 @@
 ---
 type: user
 created: 2026-09-08
-updated: 2026-09-08
+updated: 2026-09-09
 ---
 
 # User Preferences
+
+## Communication Style
+- Primary language: **Vietnamese** — respond in Vietnamese unless asked otherwise.
+- Debugging style: pastes console log fragments, tersely; expects diagnosis from minimal evidence. Ask for the full log + 2–3 targeted questions when fragments are insufficient.
 
 ## Development Environment
 - OS: Windows

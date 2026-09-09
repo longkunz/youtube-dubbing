@@ -63,6 +63,10 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private maleVoice: string;
   private diarizationEnabled: boolean;
 
+  /** Lookahead TTS diagnostics (surfaced via console, throttled). */
+  private ttsFailureCount = 0;
+  private ttsSuccessLogged = false;
+
   constructor(media: HTMLMediaElement, deps?: DubbingOrchestratorDeps) {
     this.media = media;
     this.ttsClient = deps?.ttsClient;
@@ -158,10 +162,20 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
           this.ttsClient
             .synthesize(text, { voice })
             .then((blob) => {
+              if (!blob || blob.size === 0) {
+                this.reportTtsFailure(seg.id, 'Edge TTS returned empty audio');
+                return;
+              }
               seg.audioBlob = blob;
+              if (!this.ttsSuccessLogged) {
+                this.ttsSuccessLogged = true;
+                console.info(
+                  `[AetherDub] Dub TTS audio ready (seg ${seg.id}, ${(blob.size / 1024).toFixed(1)} KB) — synthesis path OK`
+                );
+              }
             })
-            .catch(() => {
-              // Ignore synthesis errors during lookahead
+            .catch((err) => {
+              this.reportTtsFailure(seg.id, err?.message || String(err));
             });
         }
       }
@@ -234,8 +248,22 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     return this.diarizationEnabled;
   }
 
-  private get currentVoice(): string {
-    if (typeof this._voiceProfile === 'string') return this._voiceProfile;
+  /**
+   * Surface lookahead synthesis failures instead of swallowing them silently.
+   * Logged on the 1st failure and every 10th after (per-segment synthesis
+   * fires often; unthrottled warnings would flood the console).
+   */
+  private reportTtsFailure(segmentId: string, detail: unknown): void {
+    this.ttsFailureCount += 1;
+    if (this.ttsFailureCount === 1 || this.ttsFailureCount % 10 === 0) {
+      console.warn(
+        `[AetherDub] Dub TTS synthesis failed (failure #${this.ttsFailureCount}, latest seg ${segmentId}):`,
+        detail
+      );
+    }
+  }
+
+  private get currentVoice(): string {    if (typeof this._voiceProfile === 'string') return this._voiceProfile;
     if (this._voiceProfile?.voiceKey) return this._voiceProfile.voiceKey;
     if (this._voiceProfile?.id) return this._voiceProfile.id;
     return this.defaultVoice;

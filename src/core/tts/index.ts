@@ -23,4 +23,16 @@ export type { ResilientTtsClientOptions } from './web-speech-fallback';
 
 export { BackgroundDubbingTtsClient } from './background-tts-client';
 
+export {
+  EDGE_TTS_TRUSTED_CLIENT_TOKEN,
+  SEC_MS_GEC_VERSION,
+  EDGE_TTS_WS_BASE_URL,
+  buildSecMsGecInput,
+  generateSecMsGec,
+  buildEdgeTtsWsUrl,
+} from './sec-ms-gec';
+
+export { playAudioBlob, TTS_PREVIEW_TEXT } from './tts-preview';
+export type { PreviewAudio, PreviewPlayback } from './tts-preview';
+
 

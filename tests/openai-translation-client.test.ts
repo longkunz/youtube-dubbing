@@ -406,3 +406,69 @@ describe('createTranslationClient factory', () => {
     expect(client).toBeDefined();
   });
 });
+
+describe('OpenAI non-JSON envelope diagnostics (proxy transparency)', () => {
+  const makeSeg = (id: string) => ({
+    id,
+    startTime: 0,
+    endTime: 5,
+    duration: 5,
+    sourceText: 'Hello',
+  });
+
+  function nonJsonResponse(rawBody: string, contentType = 'text/html') {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => contentType },
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+      clone: () => ({ text: async () => rawBody }),
+    };
+  }
+
+  it('reports status, content-type and body snippet when the envelope is not JSON', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      nonJsonResponse('<html><body>Proxy login required</body></html>')
+    );
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'm',
+      apiKey: 'sk',
+      fetchFn: mockFetch as any,
+    });
+
+    await expect(client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' })).rejects.toThrow(
+      /non-JSON body.*200.*text\/html.*Proxy login required/
+    );
+  });
+
+  it('reports <empty body> when the proxy returns nothing', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(nonJsonResponse('   '));
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'm',
+      apiKey: 'sk',
+      fetchFn: mockFetch as any,
+    });
+
+    await expect(client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' })).rejects.toThrow(
+      /<empty body>/
+    );
+  });
+
+  it('accepts a direct translations payload without the OpenAI envelope', async () => {
+    const direct = JSON.stringify({ translations: [{ id: 's1', translatedText: 'Xin chào' }] });
+    const mockFetch = vi.fn().mockResolvedValue(nonJsonResponse(direct, 'text/plain'));
+    const client = new OpenAiCompatibleTranslationClient({
+      endpoint: 'https://proxy.internal/v1',
+      model: 'm',
+      apiKey: 'sk',
+      fetchFn: mockFetch as any,
+    });
+
+    const [seg] = await client.translateSegments([makeSeg('s1') as any], { targetLanguage: 'vi' });
+    expect(seg.translatedText).toBe('Xin chào');
+  });
+});

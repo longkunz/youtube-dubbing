@@ -7,6 +7,8 @@
  * @module storage/settings
  */
 
+import { defaultFetch } from '../core/default-fetch';
+
 export interface UserSettings {
   translationProvider: 'gemini' | 'openai-compatible';
   geminiApiKey: string;
@@ -112,7 +114,7 @@ export async function resetSettingsForTesting(): Promise<void> {
  */
 export async function pingGeminiConnection(
   apiKey: string,
-  fetchFn: typeof fetch = globalThis.fetch
+  fetchFn: typeof fetch = defaultFetch as typeof fetch
 ): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   if (!apiKey || !apiKey.trim()) {
     return {
@@ -197,7 +199,7 @@ export async function pingOpenAiConnection(
   endpoint: string,
   model: string,
   apiKey?: string,
-  fetchFn: (input: string | URL | Request, init?: RequestInit) => Promise<any> = globalThis.fetch,
+  fetchFn: (input: string | URL | Request, init?: RequestInit) => Promise<any> = defaultFetch,
 ): Promise<PingOpenAiResult> {
   if (!endpoint || !endpoint.trim()) {
     return {

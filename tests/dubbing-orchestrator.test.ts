@@ -153,6 +153,83 @@ describe('DubbingOrchestratorImpl', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Lookahead TTS diagnostics (silent-mute regression)
+  // -------------------------------------------------------------------------
+
+  describe('lookahead TTS diagnostics', () => {
+    const noAudioTranscript: Transcript = {
+      ...BASE_TRANSCRIPT,
+      segments: BASE_TRANSCRIPT.segments.map((s) => ({ ...s, audioBlob: undefined })),
+    };
+
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    let infoSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+
+    it('warns with the segment id when lookahead synthesis fails (instead of staying silent)', async () => {
+      const failingClient = { synthesize: vi.fn().mockRejectedValue(new Error('Edge 403')) };
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: failingClient });
+      await orch.init('vid-001', structuredClone(noAudioTranscript), BASE_CONFIG);
+
+      orch.handleTimeUpdate(1.0);
+      await vi.waitFor(() => {
+        expect(warnSpy).toHaveBeenCalled();
+      });
+
+      const [firstArg, firstDetail] = warnSpy.mock.calls[0];
+      expect(String(firstArg)).toMatch(/Dub TTS synthesis failed/);
+      expect(String(firstArg)).toMatch(/seg s\d/);
+      expect(String(firstDetail)).toMatch(/Edge 403/);
+      orch.destroy();
+    });
+
+    it('warns when synthesis resolves with an empty blob', async () => {
+      const emptyClient = { synthesize: vi.fn().mockResolvedValue(new Blob([])) };
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: emptyClient });
+      await orch.init('vid-001', structuredClone(noAudioTranscript), BASE_CONFIG);
+
+      orch.handleTimeUpdate(1.0);
+      await vi.waitFor(() => {
+        expect(warnSpy).toHaveBeenCalled();
+      });
+      expect(String(warnSpy.mock.calls[0][0])).toMatch(/Dub TTS synthesis failed/);
+      expect(String(warnSpy.mock.calls[0][1])).toMatch(/empty audio/);
+      orch.destroy();
+    });
+
+    it('logs an info once the first dub audio is ready', async () => {
+      const okClient = {
+        synthesize: vi.fn().mockResolvedValue(new Blob(['audio-bytes'], { type: 'audio/mpeg' })),
+      };
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: okClient });
+      await orch.init('vid-001', structuredClone(noAudioTranscript), BASE_CONFIG);
+
+      orch.handleTimeUpdate(1.0);
+      await vi.waitFor(() => {
+        expect(infoSpy).toHaveBeenCalled();
+      });
+      expect(String(infoSpy.mock.calls[0][0])).toMatch(/Dub TTS audio ready/);
+
+      // Second success does not log again
+      orch.handleTimeUpdate(6.0);
+      await vi.waitFor(() => {
+        expect(okClient.synthesize.mock.calls.length).toBeGreaterThanOrEqual(2);
+      });
+      expect(infoSpy).toHaveBeenCalledTimes(1);
+      orch.destroy();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // handlePause() / handlePlay()
   // -------------------------------------------------------------------------
 

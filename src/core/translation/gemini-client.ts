@@ -1,4 +1,5 @@
 import type { Segment, Transcript } from '../../types/domain';
+import { defaultFetch } from '../default-fetch';
 import { TranslationError, TranslationErrorCode } from './errors';
 import type { TranslationClient, TranslateOptions, FetchFn } from './types';
 
@@ -115,7 +116,7 @@ export class GeminiTranslationClient implements TranslationClient {
   constructor(options: GeminiTranslationClientOptions = {}) {
     this.apiKey = options.apiKey;
     this.model = options.model ?? DEFAULT_MODEL;
-    this.fetchFn = options.fetchFn ?? globalThis.fetch;
+    this.fetchFn = options.fetchFn ?? defaultFetch;
   }
 
   // -------------------------------------------------------------------------

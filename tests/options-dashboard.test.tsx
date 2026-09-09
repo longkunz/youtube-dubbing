@@ -291,3 +291,125 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 });
 
+describe('Edge-TTS voice preview (TTS ENGINE FORGE)', () => {
+  let segmentCache: SegmentCache;
+
+  function makeFakeAudioHarness() {
+    const instances: Array<{
+      onended: null | (() => void);
+      onerror: null | (() => void);
+      finish: () => void;
+      playCalls: number;
+      pauseCalls: number;
+    }> = [];
+    const createPreviewAudio = () => {
+      const inst = {
+        onended: null as null | (() => void),
+        onerror: null as null | (() => void),
+        playCalls: 0,
+        pauseCalls: 0,
+        finish: () => inst.onended?.(),
+      };
+      instances.push(inst);
+      return {
+        play: () => {
+          inst.playCalls += 1;
+          return Promise.resolve();
+        },
+        pause: () => {
+          inst.pauseCalls += 1;
+        },
+        get onended() {
+          return inst.onended;
+        },
+        set onended(fn: null | (() => void)) {
+          inst.onended = fn;
+        },
+        get onerror() {
+          return inst.onerror;
+        },
+        set onerror(fn: null | (() => void)) {
+          inst.onerror = fn;
+        },
+      };
+    };
+    return { instances, createPreviewAudio };
+  }
+
+  beforeEach(async () => {
+    await resetSettingsForTesting();
+    segmentCache = new SegmentCache({ dbName: `test-options-preview-${Date.now()}` });
+  });
+
+  afterEach(() => {
+    segmentCache.close();
+  });
+
+  it('synthesizes via background client and shows PLAYBACK OK when audio ends', async () => {
+    const audioBlob = new Blob(['fake-mp3'], { type: 'audio/mpeg' });
+    const mockClient = {
+      synthesize: vi.fn().mockResolvedValue(audioBlob),
+    };
+    const { instances, createPreviewAudio } = makeFakeAudioHarness();
+
+    render(
+      <OptionsDashboard
+        segmentCache={segmentCache}
+        ttsPreviewClient={mockClient}
+        createPreviewAudio={createPreviewAudio as any}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /preview edge tts voice/i }));
+    expect(await screen.findByText(/PLAYING/i)).toBeInTheDocument();
+    expect(mockClient.synthesize).toHaveBeenCalledWith(
+      expect.stringMatching(/xin chào/i),
+      expect.objectContaining({ voice: 'vi-VN-HoaiMyNeural' })
+    );
+
+    instances[0].finish();
+    expect(await screen.findByText(/PLAYBACK OK/i)).toBeInTheDocument();
+  });
+
+  it('shows ERROR badge when synthesis fails', async () => {
+    const mockClient = {
+      synthesize: vi.fn().mockRejectedValue(new Error('TTS synthesis timed out after 20s')),
+    };
+    const { createPreviewAudio } = makeFakeAudioHarness();
+
+    render(
+      <OptionsDashboard
+        segmentCache={segmentCache}
+        ttsPreviewClient={mockClient}
+        createPreviewAudio={createPreviewAudio as any}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /preview edge tts voice/i }));
+    expect(await screen.findByText(/ERROR: TTS synthesis timed out/i)).toBeInTheDocument();
+  });
+
+  it('stops playback when clicked while playing', async () => {
+    const audioBlob = new Blob(['fake-mp3'], { type: 'audio/mpeg' });
+    const mockClient = {
+      synthesize: vi.fn().mockResolvedValue(audioBlob),
+    };
+    const { instances, createPreviewAudio } = makeFakeAudioHarness();
+
+    render(
+      <OptionsDashboard
+        segmentCache={segmentCache}
+        ttsPreviewClient={mockClient}
+        createPreviewAudio={createPreviewAudio as any}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /preview edge tts voice/i }));
+    expect(await screen.findByText(/PLAYING/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /stop preview/i }));
+    expect(instances[0].pauseCalls).toBe(1);
+    expect(screen.queryByText(/PLAYBACK OK/i)).not.toBeInTheDocument();
+  });
+});
+

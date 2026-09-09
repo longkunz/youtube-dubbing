@@ -1,5 +1,6 @@
 import type { Segment, Transcript } from '../../types/domain';
 import { getSettings, normalizeEndpoint } from '../../storage/settings';
+import { defaultFetch } from '../default-fetch';
 import { TranslationError, TranslationErrorCode } from './errors';
 import type { TranslationClient, TranslateOptions, FetchFn } from './types';
 
@@ -98,7 +99,7 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
     this.endpoint = options.endpoint;
     this.model = options.model;
     this.apiKey = options.apiKey;
-    this.fetchFn = options.fetchFn ?? globalThis.fetch;
+    this.fetchFn = options.fetchFn ?? defaultFetch;
   }
 
   async translateTranscript(
@@ -265,21 +266,47 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
       );
     }
 
-    let body: OpenAiChatCompletionResponse;
+    let body: OpenAiChatCompletionResponse | null = null;
+    let rawText = '';
     try {
       body = (await response.json()) as OpenAiChatCompletionResponse;
     } catch {
-      throw new TranslationError(
-        TranslationErrorCode.INVALID_RESPONSE,
-        'Failed to parse OpenAI proxy response body as JSON.',
-      );
+      // Envelope is not JSON — capture the raw body for diagnostics.
+      // Some minimal proxies return the content payload directly instead
+      // of the OpenAI {choices[0].message.content} envelope.
+      try {
+        if (typeof response.clone === 'function') {
+          rawText = await response.clone().text();
+        } else if (typeof response.text === 'function') {
+          rawText = await response.text();
+        }
+      } catch {
+        rawText = '';
+      }
     }
 
-    const content = body.choices?.[0]?.message?.content;
+    const content = body?.choices?.[0]?.message?.content;
+    if (!content && rawText) {
+      // Fallback: proxy returned the translations payload without envelope.
+      try {
+        this.parseResponse(rawText);
+        return rawText;
+      } catch {
+        // Not a direct payload either — fall through to the diagnostic error.
+      }
+    }
     if (!content) {
+      const contentType = (() => {
+        try {
+          return response.headers?.get?.('content-type') ?? 'unknown';
+        } catch {
+          return 'unknown';
+        }
+      })();
+      const snippet = rawText.trim() ? rawText.trim().slice(0, 300) : '<empty body>';
       throw new TranslationError(
         TranslationErrorCode.INVALID_RESPONSE,
-        'OpenAI proxy returned an empty or malformed response (no choices content).',
+        `OpenAI proxy returned non-JSON body (HTTP ${response.status}, content-type: ${contentType}): ${snippet}`,
       );
     }
 

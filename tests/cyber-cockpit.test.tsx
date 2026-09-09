@@ -161,8 +161,7 @@ describe('CyberCockpit', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onOpenSettings when header settings button or footer link is clicked', () => {
-    const onOpenSettings = vi.fn();
+  it('calls onOpenSettings when header settings button or footer link is clicked', () => {    const onOpenSettings = vi.fn();
     render(<CyberCockpit isOpen={true} onClose={vi.fn()} onOpenSettings={onOpenSettings} />);
 
     // Header settings button
@@ -176,5 +175,21 @@ describe('CyberCockpit', () => {
     expect(footerSettingsBtn).toBeInTheDocument();
     fireEvent.click(footerSettingsBtn);
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('defaults the Engine badge to GEMINI-2.0', () => {
+    render(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText('GEMINI-2.0')).toBeInTheDocument();
+  });
+
+  it('renders the configured engine label instead of the default', () => {
+    const { rerender } = render(
+      <CyberCockpit isOpen={true} onClose={vi.fn()} engineLabel="GPT-4O-MINI" />
+    );
+    expect(screen.getByText('GPT-4O-MINI')).toBeInTheDocument();
+    expect(screen.queryByText('GEMINI-2.0')).not.toBeInTheDocument();
+
+    rerender(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText('GEMINI-2.0')).toBeInTheDocument();
   });
 });

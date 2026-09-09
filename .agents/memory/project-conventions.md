@@ -1,10 +1,14 @@
 ---
 type: project
 created: 2026-09-08
-updated: 2026-09-08
+updated: 2026-09-09
 ---
 
 # Project Conventions
+
+## Windows Shell & Build
+- PowerShell execution policy blocks `npm.ps1` — always invoke npm via the call operator with the `.cmd` shim (e.g. `& "<nodejs>\pm.cmd" run build`), never bare `npm`.
+- After every build, output lands in `.output/chrome-mv3/`; the user must manually reload the extension at `chrome://extensions/` (service worker restart) plus hard-refresh the YouTube tab — verify new strings made it into the bundle before asking the user to test.
 
 ## Tech Stack
 - Web Extension: WXT (Manifest V3) + React + TypeScript + TailwindCSS

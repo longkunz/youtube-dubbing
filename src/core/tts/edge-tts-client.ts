@@ -12,16 +12,14 @@
 import type { VoiceProfile } from '../../types/domain';
 import { EdgeTtsError, EdgeTtsErrorCode } from './errors';
 import { WebSpeechFallback } from './web-speech-fallback';
+import {
+  buildEdgeTtsWsUrl,
+} from './sec-ms-gec';
 
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const EDGE_TTS_URL =
-  'wss://speech.platform.bing.com/consumer/speech/synthesize/readahead/edge/v1' +
-  '?trustedclienttoken=6A5AA1D4EA654B9D8325B2C1EB673970' +
-  '&ConnectionId=';
 
 const MAX_RETRIES = 3;
 
@@ -39,6 +37,12 @@ export interface WebSocketLike {
   onclose: ((event: CloseEvent) => void) | null;
   send(data: string | ArrayBuffer | Blob): void;
   close(): void;
+  /**
+   * Binary frame mode. The client sets this to 'arraybuffer' so audio
+   * frames arrive as ArrayBuffer (the browser default is 'blob', which
+   * the frame parser would silently ignore → empty audio).
+   */
+  binaryType?: string;
 }
 
 /**
@@ -53,6 +57,11 @@ export interface EdgeTtsClientOptions {
   enableFallback?: boolean;
   /** Optional fallback WebSpeechFallback adapter instance. */
   fallback?: WebSpeechFallback;
+  /**
+   * Injectable Sec-MS-GEC minter (defaults to WebCrypto-based generation).
+   * Override in tests for deterministic URLs.
+   */
+  secMsGecGenerator?: () => Promise<string> | string;
 }
 
 
@@ -173,12 +182,20 @@ export class EdgeTtsClient {
   private readonly retryDelayMs: number;
   private readonly enableFallback: boolean;
   private readonly fallback?: WebSpeechFallback;
+  private readonly secMsGecGenerator?: () => Promise<string> | string;
 
   constructor(options: EdgeTtsClientOptions = {}) {
-    this.wsFactory = options.webSocketFactory ?? ((url) => new WebSocket(url));
+    this.wsFactory =
+      options.webSocketFactory ??
+      ((url) => {
+        const ws = new WebSocket(url);
+        ws.binaryType = 'arraybuffer';
+        return ws;
+      });
     this.retryDelayMs = options.retryDelayMs ?? 200;
     this.enableFallback = options.enableFallback ?? false;
     this.fallback = options.fallback;
+    this.secMsGecGenerator = options.secMsGecGenerator;
   }
 
 
@@ -240,7 +257,12 @@ export class EdgeTtsClient {
       }
 
       try {
-        const blob = await this._attemptSynthesize(ssml, options?.signal);
+        // Fresh ConnectionId + Sec-MS-GEC per attempt (GEC is time-windowed).
+        const requestId = uuid().replace(/-/g, '');
+        const url = await buildEdgeTtsWsUrl(requestId, {
+          generateGec: this.secMsGecGenerator,
+        });
+        const blob = await this._attemptSynthesize(ssml, options?.signal, url, requestId);
         return blob;
       } catch (err) {
         if (err instanceof EdgeTtsError) {
@@ -275,11 +297,21 @@ export class EdgeTtsClient {
   /**
    * Single synthesis attempt over one WebSocket connection.
    */
-  private _attemptSynthesize(ssml: string, signal?: AbortSignal): Promise<Blob> {
+  private _attemptSynthesize(
+    ssml: string,
+    signal: AbortSignal | undefined,
+    url: string,
+    requestId: string
+  ): Promise<Blob> {
     return new Promise<Blob>((resolve, reject) => {
-      const requestId = uuid().replace(/-/g, '');
-      const url = EDGE_TTS_URL + requestId;
       const ws = this.wsFactory(url);
+      // Audio frames must arrive as ArrayBuffer for parseAudioFrame.
+      // (Browser default binaryType is 'blob'.) Harmless for test fakes.
+      try {
+        ws.binaryType = 'arraybuffer';
+      } catch {
+        // Read-only in some fake implementations — ignore.
+      }
       const audioChunks: Uint8Array<ArrayBuffer>[] = [];
       let settled = false;
 

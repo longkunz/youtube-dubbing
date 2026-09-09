@@ -2,6 +2,7 @@
 
 ## User
 - [user] Windows environment, PowerShell shell, GitHub user longkunz → user-preferences.md
+- [user] Respond in Vietnamese; user debugs via pasted log fragments, ask for full log when insufficient → user-preferences.md
 - [user] Prefers disciplined workflows: Grilling → Domain Modeling → Open Design Prototype → Spec → Tickets → TDD → user-preferences.md
 - [user] Loves Hyper / Fantastic Sci-Fi HUD aesthetics (cockpit, glassmorphism, neon), but gentle subtitles → user-preferences.md
 
@@ -14,6 +15,7 @@
 - [project] Persistent cache: SegmentCache via idb promise wrapper → project-conventions.md
 - [project] Multi-agent: Coder is agy (Sonnet 4.6 / Gemini 3.8 Flash High), Reviewer is OpenCode (Muse Spark Free) → project-conventions.md
 - [project] Orchestration: Always dispatch Coder & Reviewer in dedicated Orca Terminals on Windows → project-conventions.md
+- [project] npm via pm.cmd shim (ps1 blocked); verify bundle strings after build, user reloads ext manually → project-conventions.md
 
 ## Tech Decisions
 - [project] 100% Client-Side BYOK architecture (ADR-0001) → tech-decisions.md

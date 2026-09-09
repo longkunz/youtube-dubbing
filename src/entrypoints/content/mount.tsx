@@ -3,6 +3,11 @@ import { createRoot, Root } from 'react-dom/client';
 import { HudContainer, type HudContainerProps } from '@/components/HudContainer';
 import { HUD_STYLES } from '@/styles/hud.styles';
 import type { DubbingOrchestrator } from '@/types/domain';
+import {
+  activateDubbing,
+  deactivateDubbing,
+  type ActivationHudCallbacks,
+} from './orchestrator-coordinator';
 
 export interface HudInstance {
   unmount: () => void;
@@ -52,9 +57,77 @@ export function mountHud(
   let currentOrchestrator = orchestrator;
   let currentProps: Partial<HudContainerProps> = { ...initialProps };
 
+  // AbortController for the current activation attempt
+  let activationController: AbortController | null = null;
+
+  // Resolve video element lazily so mount doesn't require it at construction
+  const resolveVideo = (): HTMLVideoElement | null =>
+    (document.querySelector('video.html5-main-video') as HTMLVideoElement | null) ||
+    (document.querySelector('video') as HTMLVideoElement | null);
+
+  const hudCallbacks: ActivationHudCallbacks = {
+    setPreparationMode: (mode) => {
+      currentProps = {
+        ...currentProps,
+        isPreparing: mode === 'preparing',
+        preparationMode: mode,
+      };
+      renderComponent();
+    },
+    setEnabled: (enabled) => {
+      currentProps = { ...currentProps, isEnabled: enabled };
+      renderComponent();
+    },
+    setError: (msg) => {
+      if (msg) {
+        // Show error via the isNoCaptions/hasCaptions flag which activates the NotificationBanner
+        currentProps = { ...currentProps, hasCaptions: false, isNoCaptions: true };
+        renderComponent();
+      }
+    },
+  };
+
+  const handleActivateDubbing = () => {
+    const video = resolveVideo();
+    if (!video) return;
+
+    // Cancel any in-flight activation
+    activationController?.abort();
+    activationController = new AbortController();
+    const signal = activationController.signal;
+
+    // Lazy self-reference for the instance
+    activateDubbing(video, instance, hudCallbacks, signal).catch((err) => {
+      console.error('[AetherDub] activateDubbing threw unexpectedly:', err);
+    });
+  };
+
+  const handleDeactivateDubbing = () => {
+    const abortFn = activationController
+      ? () => activationController!.abort()
+      : undefined;
+    activationController = null;
+    deactivateDubbing(hudCallbacks, abortFn);
+  };
+
+  const handleResumePlayback = () => {
+    const video = resolveVideo();
+    video?.play().catch(() => {});
+    hudCallbacks.setPreparationMode(null);
+  };
+
   const renderComponent = () => {
     if (mounted && root) {
-      root.render(<HudContainer orchestrator={currentOrchestrator} {...currentProps} />);
+      root.render(
+        <HudContainer
+          orchestrator={currentOrchestrator}
+          {...currentProps}
+          onActivateDubbing={handleActivateDubbing}
+          onDeactivateDubbing={handleDeactivateDubbing}
+          onCancelPreparation={handleDeactivateDubbing}
+          onResumePlayback={handleResumePlayback}
+        />
+      );
     }
   };
 
@@ -72,6 +145,8 @@ export function mountHud(
     unmount: () => {
       if (!mounted) return;
       mounted = false;
+      activationController?.abort();
+      activationController = null;
       if (root) {
         root.unmount();
         root = null;

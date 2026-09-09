@@ -60,3 +60,16 @@ _Avoid_: Translation API, LLM wrapper, model server
 A REST API gateway conforming to the standard `/v1/chat/completions` specification, accepting customizable base URLs, model identifiers, and optional bearer tokens.
 _Avoid_: Custom proxy, chat URL, backend proxy
 
+**On-Demand Activation**:
+The lifecycle model where dubbing remains dormant upon video load until explicitly engaged by the user, replacing automatic background pipeline initiation.
+_Avoid_: Lazy loading, manual trigger, opt-in start, deferred dubbing
+
+**Preparation Overlay**:
+A centered, in-player sci-fi HUD visual indicator rendered while the video is temporarily paused to fetch captions, translate dialogue, and synthesize initial lookahead speech.
+_Avoid_: Center spinner, loading modal, buffering popup, wait screen
+
+**Split Pill Control**:
+A dual-action control surface on the YouTube player toolbar combining a direct Dub Track toggle action with a dedicated settings expander for the Cyber Cockpit.
+_Avoid_: Double button, toggle pill, combined widget
+
+
