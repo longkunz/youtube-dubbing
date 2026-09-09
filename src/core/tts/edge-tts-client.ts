@@ -90,9 +90,10 @@ function uuid(): string {
   });
 }
 
-/** Escape XML special characters in text content. */
+/** Escape XML special characters in text content and strip invalid control characters. */
 function escapeXml(text: string): string {
   return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -202,7 +203,7 @@ export class EdgeTtsClient {
     this.enableFallback = options.enableFallback ?? false;
     this.fallback = options.fallback;
     this.secMsGecGenerator = options.secMsGecGenerator;
-    this.attemptTimeoutMs = options.attemptTimeoutMs ?? 10000;
+    this.attemptTimeoutMs = options.attemptTimeoutMs ?? 25000;
   }
 
 
@@ -323,18 +324,23 @@ export class EdgeTtsClient {
       let settled = false;
 
       let timer: ReturnType<typeof setTimeout> | null = null;
-      if (this.attemptTimeoutMs > 0) {
-        timer = setTimeout(() => {
-          settle(() =>
-            reject(
-              new EdgeTtsError(
-                EdgeTtsErrorCode.CONNECTION_CLOSED,
-                `Edge TTS attempt timed out after ${this.attemptTimeoutMs}ms`
+      const resetTimeout = (ms: number = this.attemptTimeoutMs) => {
+        if (timer) clearTimeout(timer);
+        if (ms > 0) {
+          timer = setTimeout(() => {
+            settle(() =>
+              reject(
+                new EdgeTtsError(
+                  EdgeTtsErrorCode.CONNECTION_CLOSED,
+                  `Edge TTS attempt timed out after ${ms}ms`
+                )
               )
-            )
-          );
-        }, this.attemptTimeoutMs);
-      }
+            );
+          }, ms);
+        }
+      };
+
+      resetTimeout(this.attemptTimeoutMs);
 
       const settle = (action: () => void) => {
         if (settled) return;
@@ -367,6 +373,9 @@ export class EdgeTtsClient {
       };
 
       ws.onmessage = (event: MessageEvent) => {
+        // Reset timeout whenever message arrives (allow up to 15s between chunks)
+        resetTimeout(Math.max(15000, this.attemptTimeoutMs));
+
         if (event.data instanceof ArrayBuffer) {
           const chunk = parseAudioFrame(event.data);
           if (chunk) audioChunks.push(chunk);

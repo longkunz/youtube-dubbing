@@ -274,6 +274,39 @@ describe('DubbingOrchestratorImpl', () => {
 
       orch.destroy();
     });
+
+    it('skips TTS network calls for non-speech segments like [Music] and assigns empty blob', async () => {
+      const mockClient = {
+        synthesize: vi.fn().mockResolvedValue(new Blob(['audio'], { type: 'audio/mpeg' })),
+      };
+
+      const transcriptWithMusic: Transcript = {
+        ...BASE_TRANSCRIPT,
+        segments: [
+          makeSegment({ id: 's-music', startTime: 0, endTime: 5, sourceText: '[Music]', translatedText: '[Âm nhạc]', audioBlob: undefined }),
+          makeSegment({ id: 's-speech', startTime: 6, endTime: 10, sourceText: 'Hello', translatedText: 'Xin chào', audioBlob: undefined }),
+        ],
+      };
+
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: mockClient });
+      await orch.init('vid-001', transcriptWithMusic, BASE_CONFIG);
+
+      orch.handleTimeUpdate(0.0);
+
+      // Wait for speech segment to be synthesized
+      await vi.waitFor(() => {
+        expect(mockClient.synthesize).toHaveBeenCalledTimes(1);
+      });
+
+      // s-music was skipped from network call and assigned empty blob
+      expect(transcriptWithMusic.segments[0].audioBlob).toBeDefined();
+      expect(transcriptWithMusic.segments[0].audioBlob?.size).toBe(0);
+
+      // s-speech was synthesized with text
+      expect(mockClient.synthesize).toHaveBeenCalledWith('Xin chào', expect.anything());
+
+      orch.destroy();
+    });
   });
 
   // -------------------------------------------------------------------------

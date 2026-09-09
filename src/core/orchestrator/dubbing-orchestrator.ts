@@ -29,6 +29,7 @@ import { AudioDucker } from '../player/audio-ducker';
 import { TimeStretcher } from '../player/time-stretcher';
 import { PlaybackSyncEngine } from '../player/sync-engine';
 import { SlidingWindow } from './sliding-window';
+import { cleanSpeechText, isSpeakableText } from '../tts/text-cleaner';
 
 export interface DubbingTtsClient {
   synthesize(text: string, options?: { voice?: string; rate?: string; pitch?: string }): Promise<Blob>;
@@ -133,7 +134,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
 
     const activeSegment = this.findSegmentAt(currentTime);
 
-    if (activeSegment && activeSegment.audioBlob) {
+    if (activeSegment && activeSegment.audioBlob && activeSegment.audioBlob.size > 0) {
       // Entering a segment that has audio.
       if (this._activeSegmentId !== activeSegment.id) {
         this._activeSegmentId = activeSegment.id;
@@ -148,8 +149,11 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
         this.syncEngine.playSegment(activeSegment, activeSegment.audioBlob, rate);
         this.ducker.duck();
       }
-    } else if ((!activeSegment || !activeSegment.audioBlob) && this._activeSegmentId !== null) {
-      // Exited a segment into silence, OR entered an audio-less segment.
+    } else if (
+      (!activeSegment || !activeSegment.audioBlob || activeSegment.audioBlob.size === 0) &&
+      this._activeSegmentId !== null
+    ) {
+      // Exited a segment into silence, OR entered an audio-less / non-speech segment.
       // Either way: stop Dub Track, restore volume, clear active tracking.
       this._activeSegmentId = null;
       this.syncEngine.stop();
@@ -236,11 +240,12 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
    * Logged on the 1st failure and every 10th after (per-segment synthesis
    * fires often; unthrottled warnings would flood the console).
    */
-  private reportTtsFailure(segmentId: string, detail: unknown): void {
+  private reportTtsFailure(segmentId: string, detail: unknown, text?: string): void {
     this.ttsFailureCount += 1;
     if (this.ttsFailureCount === 1 || this.ttsFailureCount % 10 === 0) {
+      const textHint = text ? ` (text: "${text.slice(0, 40)}...")` : '';
       console.warn(
-        `[AetherDub] Dub TTS synthesis failed (failure #${this.ttsFailureCount}, latest seg ${segmentId}):`,
+        `[AetherDub] Dub TTS synthesis failed (failure #${this.ttsFailureCount}, latest seg ${segmentId}${textHint}):`,
         detail
       );
     }
@@ -265,16 +270,24 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   }
 
   async synthesizeSegment(segment: Segment): Promise<Blob | undefined> {
+    const rawText = segment.translatedText ?? segment.sourceText;
+    const text = cleanSpeechText(rawText);
+
+    if (!isSpeakableText(text)) {
+      const emptyBlob = new Blob([], { type: 'audio/mpeg' });
+      segment.audioBlob = emptyBlob;
+      return emptyBlob;
+    }
+
     const voice = this.resolveVoiceForSegment(segment);
     segment.voiceProfileId = voice;
     if (this.ttsClient) {
-      const text = segment.translatedText ?? segment.sourceText;
       try {
         const blob = await this.ttsClient.synthesize(text, { voice });
         segment.audioBlob = blob;
         return blob;
       } catch (err: any) {
-        this.reportTtsFailure(segment.id, err?.message || String(err));
+        this.reportTtsFailure(segment.id, err?.message || String(err), text);
         return undefined;
       }
     }
@@ -390,18 +403,27 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       return;
     }
 
+    const rawText = seg.translatedText ?? seg.sourceText;
+    const text = cleanSpeechText(rawText);
+
+    if (!isSpeakableText(text)) {
+      // Non-speech segment (e.g. [Music], silence, sound effects)
+      seg.audioBlob = new Blob([], { type: 'audio/mpeg' });
+      this.slidingWindow.markSynthesized(seg.id);
+      return;
+    }
+
     this.slidingWindow.markSynthesized(seg.id);
     this.inFlightTtsCount++;
 
     const voice = this.resolveVoiceForSegment(seg);
     seg.voiceProfileId = voice;
-    const text = seg.translatedText ?? seg.sourceText;
 
     this.ttsClient
       .synthesize(text, { voice })
       .then((blob) => {
         if (!blob || blob.size === 0) {
-          this.handleSegmentTtsFailure(seg.id, 'Edge TTS returned empty audio');
+          this.handleSegmentTtsFailure(seg.id, 'Edge TTS returned empty audio', text);
           return;
         }
 
@@ -441,7 +463,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
         }
       })
       .catch((err) => {
-        this.handleSegmentTtsFailure(seg.id, err?.message || String(err));
+        this.handleSegmentTtsFailure(seg.id, err?.message || String(err), text);
       })
       .finally(() => {
         this.inFlightTtsCount = Math.max(0, this.inFlightTtsCount - 1);
@@ -449,10 +471,10 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       });
   }
 
-  private handleSegmentTtsFailure(segmentId: string, detail: unknown): void {
+  private handleSegmentTtsFailure(segmentId: string, detail: unknown, text?: string): void {
     const currentFailures = (this.segmentFailures.get(segmentId) ?? 0) + 1;
     this.segmentFailures.set(segmentId, currentFailures);
-    this.reportTtsFailure(segmentId, detail);
+    this.reportTtsFailure(segmentId, detail, text);
 
     if (currentFailures <= DubbingOrchestratorImpl.MAX_SEGMENT_RETRIES) {
       const timer = setTimeout(() => {

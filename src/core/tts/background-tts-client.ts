@@ -35,9 +35,9 @@ export class BackgroundDubbingTtsClient implements DubbingTtsClient {
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
-          reject(new Error('TTS synthesis timed out after 30s'));
+          reject(new Error('TTS synthesis timed out after 45s'));
         }
-      }, 30000);
+      }, 45000);
 
       chrome.runtime.sendMessage(
         {
