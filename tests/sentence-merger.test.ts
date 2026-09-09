@@ -100,4 +100,28 @@ describe('SentenceMerger', () => {
     expect(merged[0].sourceText).toBe('Actual content.');
     expect(merged[0].startTime).toBe(0.6);
   });
+
+  it('splits segments when merged duration would exceed maxDuration', () => {
+    const customMerger = new SentenceMerger({ gapThreshold: 0.4, maxDuration: 5.0 });
+    const segments: Segment[] = [
+      { id: '1', startTime: 0.0, endTime: 3.0, duration: 3.0, sourceText: 'First continuous chunk without punctuation' },
+      { id: '2', startTime: 3.1, endTime: 6.0, duration: 2.9, sourceText: 'second chunk pushing duration to 6s' } // total duration would be 6.0s > 5.0s
+    ];
+    const merged = customMerger.merge(segments);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].sourceText).toBe('First continuous chunk without punctuation');
+    expect(merged[1].sourceText).toBe('second chunk pushing duration to 6s');
+  });
+
+  it('splits segments when merged word count would exceed maxWords', () => {
+    const customMerger = new SentenceMerger({ gapThreshold: 0.4, maxWords: 6 });
+    const segments: Segment[] = [
+      { id: '1', startTime: 0.0, endTime: 2.0, duration: 2.0, sourceText: 'one two three four' },
+      { id: '2', startTime: 2.1, endTime: 4.0, duration: 1.9, sourceText: 'five six seven' } // total words would be 7 > 6
+    ];
+    const merged = customMerger.merge(segments);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].sourceText).toBe('one two three four');
+    expect(merged[1].sourceText).toBe('five six seven');
+  });
 });

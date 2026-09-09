@@ -150,6 +150,47 @@ describe('DubbingOrchestratorImpl', () => {
       orch.destroy();
       stopSpy.mockRestore();
     });
+
+    it('does not re-play segment on subsequent timeupdate after speechend fires within the same segment', async () => {
+      const playSpy = vi.spyOn(PlaybackSyncEngine.prototype, 'playSegment');
+      const testTranscript: Transcript = {
+        ...BASE_TRANSCRIPT,
+        segments: [
+          makeSegment({ id: 's1', startTime: 0, endTime: 6, duration: 6, sourceText: 'Hello', translatedText: 'Xin chào', audioBlob: new Blob(['fake-audio']) }),
+          makeSegment({ id: 's2', startTime: 7, endTime: 12, duration: 5, sourceText: 'World', translatedText: 'Thế giới', audioBlob: new Blob(['fake-audio-2']) }),
+        ],
+      };
+      const orch = new DubbingOrchestratorImpl(video);
+      await orch.init('vid-001', testTranscript, BASE_CONFIG);
+
+      // 1. Playhead enters s1 at 1.0s
+      orch.handleTimeUpdate(1.0);
+      expect(playSpy).toHaveBeenCalledTimes(1);
+      expect(orch.getState().activeSegmentId).toBe('s1');
+
+      // 2. Audio finishes early at 3.0s (speechend event fires on syncEngine)
+      (orch as any).syncEngine.emit('speechend');
+      expect(orch.getState().activeSegmentId).toBeNull();
+
+      // 3. Playhead advances to 4.0s (still inside s1 [0–6])
+      orch.handleTimeUpdate(4.0);
+      // Must NOT re-trigger playSegment!
+      expect(playSpy).toHaveBeenCalledTimes(1);
+
+      // 4. Playhead advances to 7.5s (enters s2 [7–12])
+      orch.handleTimeUpdate(7.5);
+      expect(playSpy).toHaveBeenCalledTimes(2);
+      expect(orch.getState().activeSegmentId).toBe('s2');
+
+      // 5. User seeks back to 2.0s (inside s1)
+      orch.handleSeek(2.0);
+      orch.handleTimeUpdate(2.0);
+      // Now s1 plays again because user explicitly sought
+      expect(playSpy).toHaveBeenCalledTimes(3);
+
+      orch.destroy();
+      playSpy.mockRestore();
+    });
   });
 
   // -------------------------------------------------------------------------

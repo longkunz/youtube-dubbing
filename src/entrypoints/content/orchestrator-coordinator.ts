@@ -584,16 +584,23 @@ export async function startDubbingPipeline(
     // fetched on every page load even for cached videos — pure throttle fuel.
     let translatedTranscript = await cache.getTranscript(videoId, targetLanguage).catch(() => null);
     if (translatedTranscript && translatedTranscript.segments.length > 0) {
-      console.log('[AetherDub] Reusing cached transcript from IndexedDB (0 timedtext requests, 0ms latency)');
+      if (translatedTranscript.segments.some((s) => s.duration > 15)) {
+        console.log('[AetherDub] Invalidating stale cached transcript with oversized segments (>15s)');
+        translatedTranscript = null;
+      } else {
+        console.log('[AetherDub] Reusing cached transcript from IndexedDB (0 timedtext requests, 0ms latency)');
+      }
     } else {
       translatedTranscript = null;
+    }
 
-      // ── 1. Resolve caption tracks ──────────────────────────────────────────
-      // Try POT-bearing audio track URLs first (bridge polls up to 8 s).
-      // Fall back to static playerResponse URLs if audio track not available.
-      let captionTracks: CaptionTrack[] | undefined;
-      let playerResponse: any;
+    // ── 1. Resolve caption tracks ──────────────────────────────────────────
+    // Try POT-bearing audio track URLs first (bridge polls up to 8 s).
+    // Fall back to static playerResponse URLs if audio track not available.
+    let captionTracks: CaptionTrack[] | undefined;
+    let playerResponse: any;
 
+    if (!translatedTranscript) {
       const audioTracks = await waitForAudioCaptionTracks(videoId, 8000);
       if (audioTracks.length > 0) {
         const potCount = audioTracks.filter(trackHasPot).length;

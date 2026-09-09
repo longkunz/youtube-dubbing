@@ -6,10 +6,29 @@ export interface SentenceMergerOptions {
    * Default is 0.4s based on YouTube caption fragmentation heuristics.
    */
   gapThreshold?: number;
+  /**
+   * Maximum duration (in seconds) for a merged sentence segment.
+   * Prevents YouTube auto-generated captions without terminal punctuation
+   * from merging into giant multi-minute blocks.
+   * Default: 10.0s.
+   */
+  maxDuration?: number;
+  /**
+   * Maximum word count for a merged sentence segment.
+   * Default: 25 words.
+   */
+  maxWords?: number;
 }
 
 const DEFAULT_GAP_THRESHOLD = 0.4;
+const DEFAULT_MAX_DURATION = 10.0;
+const DEFAULT_MAX_WORDS = 25;
 const TERMINAL_PUNCTUATION_REGEX = /[.!?…]["'”’]?$/;
+
+function countWords(text: string): number {
+  if (!text) return 0;
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
 
 /**
  * SentenceMerger
@@ -19,9 +38,13 @@ const TERMINAL_PUNCTUATION_REGEX = /[.!?…]["'”’]?$/;
  */
 export class SentenceMerger {
   private readonly gapThreshold: number;
+  private readonly maxDuration: number;
+  private readonly maxWords: number;
 
   constructor(options: SentenceMergerOptions = {}) {
     this.gapThreshold = options.gapThreshold ?? DEFAULT_GAP_THRESHOLD;
+    this.maxDuration = options.maxDuration ?? DEFAULT_MAX_DURATION;
+    this.maxWords = options.maxWords ?? DEFAULT_MAX_WORDS;
   }
 
   /**
@@ -67,10 +90,18 @@ export class SentenceMerger {
         continue;
       }
 
+      const potentialDuration = Math.max(current.endTime, next.endTime) - current.startTime;
+      const potentialWords = countWords(current.sourceText) + countWords(cleanNextText);
+
       // Check if we can merge:
       // 1. Gap is smaller than threshold (e.g. < 0.4s)
       // 2. Previous segment does not end with terminal punctuation
-      const canMerge = gap < this.gapThreshold && !this.endsWithSentencePunctuation(current.sourceText);
+      // 3. Merged segment does not exceed maxDuration or maxWords
+      const canMerge =
+        gap < this.gapThreshold &&
+        !this.endsWithSentencePunctuation(current.sourceText) &&
+        potentialDuration <= this.maxDuration &&
+        potentialWords <= this.maxWords;
 
       if (canMerge) {
         const combinedText = `${current.sourceText} ${cleanNextText}`.replace(/\s+/g, ' ').trim();

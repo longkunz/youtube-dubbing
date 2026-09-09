@@ -58,6 +58,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private _targetLanguage: string = 'vi';
   private _playbackRate: number = 1.0;
   private _activeSegmentId: string | null = null;
+  private lastPlayedSegmentId: string | null = null;
   private _voiceProfile: VoiceProfile | string | null = null;
   private duckLevel: number = 0.2;
 
@@ -135,9 +136,10 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     const activeSegment = this.findSegmentAt(currentTime);
 
     if (activeSegment && activeSegment.audioBlob && activeSegment.audioBlob.size > 0) {
-      // Entering a segment that has audio.
-      if (this._activeSegmentId !== activeSegment.id) {
+      // Entering a segment that has audio and hasn't been played yet for this segment passage
+      if (this.lastPlayedSegmentId !== activeSegment.id) {
         this._activeSegmentId = activeSegment.id;
+        this.lastPlayedSegmentId = activeSegment.id;
         const rate = this.stretcher.calculateRate(
           this.estimateAudioDuration(activeSegment.audioBlob, activeSegment.duration),
           activeSegment.duration,
@@ -175,6 +177,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       duckLevel: this.duckLevel,
     });
     this._activeSegmentId = null;
+    this.lastPlayedSegmentId = null;
     this.slidingWindow.recenter(newTime);
     this.segmentFailures.clear();
     if (this.status !== 'paused') {
@@ -347,6 +350,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     this.segmentFailures.clear();
     this.inFlightTtsCount = 0;
     this._activeSegmentId = null;
+    this.lastPlayedSegmentId = null;
     this.status = 'destroyed';
   }
 
@@ -445,11 +449,12 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
         const curTime = this.media.currentTime;
         if (
           this.findSegmentAt(curTime)?.id === seg.id &&
-          this._activeSegmentId !== seg.id &&
+          this.lastPlayedSegmentId !== seg.id &&
           this.status !== 'paused' &&
           this.status !== 'destroyed'
         ) {
           this._activeSegmentId = seg.id;
+          this.lastPlayedSegmentId = seg.id;
           const rate = this.stretcher.calculateRate(
             this.estimateAudioDuration(blob, seg.duration),
             seg.duration,
