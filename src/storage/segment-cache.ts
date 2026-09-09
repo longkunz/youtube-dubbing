@@ -241,7 +241,7 @@ export class SegmentCache {
     const prefix = SegmentCache.audioPrefix(videoId, language, voiceId);
 
     // Key range covering all keys with the given `${videoId}_${language}_${voiceId}_` prefix
-    const range = IDBKeyRange.bound(prefix, prefix + '\uffff');
+    const range = IDBKeyRange.bound(prefix, prefix + '\ufffd');
     const records = await db.getAll(AUDIO_STORE, range);
 
     const result = new Map<string, Blob>();
