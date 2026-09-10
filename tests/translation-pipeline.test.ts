@@ -73,9 +73,9 @@ describe('GeminiTranslationClient', () => {
       expect(() => new GeminiTranslationClient({ fetchFn: mockFetch })).not.toThrow();
     });
 
-    it('uses gemini-2.5-flash as default model', () => {
+    it('uses gemini-3.8-flash as default model', () => {
       const client = new GeminiTranslationClient({ apiKey: 'key', fetchFn: mockFetch });
-      expect((client as any).model).toBe('gemini-2.5-flash');
+      expect((client as any).model).toBe('gemini-3.8-flash');
     });
 
     it('accepts custom model override', () => {
@@ -145,7 +145,7 @@ describe('GeminiTranslationClient', () => {
       await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
 
       const calledUrl = mockFetch.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('gemini-2.5-flash');
+      expect(calledUrl).toContain('gemini-3.8-flash');
       expect(calledUrl).toContain('my-secret-key');
       expect(calledUrl).toContain('generateContent');
     });
@@ -298,72 +298,108 @@ describe('GeminiTranslationClient', () => {
       });
     });
 
-    it('falls back to gemini-1.5-flash when the configured model returns HTTP 404', async () => {
+    it('falls back to gemini-3.8-flash when gemini-2.5-flash returns HTTP 404', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: false,
           status: 404,
-          json: async () => ({ error: { message: 'models/gemini-3.8-flash is not found' } }),
+          json: async () => ({
+            error: {
+              message:
+                'models/gemini-2.5-flash is not found for API version v1beta, or is not supported for generateContent.',
+            },
+          }),
         })
         .mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
 
       const client = new GeminiTranslationClient({
         apiKey: 'key-test',
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         fetchFn: mockFetch,
       });
       const result = await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
 
       expect(result.segments[0].translatedText).toBe('Xin chào mọi người, chào mừng đến kênh.');
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(mockFetch.mock.calls[0][0] as string).toContain('gemini-3.8-flash');
-      expect(mockFetch.mock.calls[1][0] as string).toContain('gemini-1.5-flash');
+      expect(mockFetch.mock.calls[0][0] as string).toContain('gemini-2.5-flash');
+      expect(mockFetch.mock.calls[1][0] as string).toContain('gemini-3.8-flash');
+      expect(mockFetch.mock.calls.map((call) => String(call[0])).join(' ')).not.toContain(
+        'gemini-1.5-flash',
+      );
     });
 
-    it('does not retry fallback when the configured model is already gemini-1.5-flash', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: { message: 'models/gemini-1.5-flash is not found' } }),
-      });
+    it('retries a current Flash model when a deprecated gemini-1.5-flash config returns 404', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          json: async () => ({
+            error: {
+              message:
+                'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
+            },
+          }),
+        })
+        .mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
 
       const client = new GeminiTranslationClient({
         apiKey: 'key-test',
         model: 'gemini-1.5-flash',
         fetchFn: mockFetch,
       });
+      const result = await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
 
-      await expect(client.translateTranscript(BASE_TRANSCRIPT)).rejects.toMatchObject({
-        code: TranslationErrorCode.NETWORK_ERROR,
-        httpStatus: 404,
-        message: expect.stringContaining('models/gemini-1.5-flash is not found'),
-      });
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.segments[0].translatedText).toBe('Xin chào mọi người, chào mừng đến kênh.');
+      expect(mockFetch.mock.calls[0][0] as string).toContain('gemini-1.5-flash');
+      expect(mockFetch.mock.calls[1][0] as string).toContain('gemini-3.8-flash');
     });
 
-    it('throws the fallback diagnostic when both the configured model and gemini-1.5-flash return 404', async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-          json: async () => ({ error: { message: 'primary missing' } }),
-        })
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-          json: async () => ({ error: { message: 'fallback missing' } }),
-        });
+    it('lists available models and retries generateContent when hardcoded fallbacks also 404', async () => {
+      const notFound = (model: string) => ({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: `models/${model} is not found` } }),
+      });
+
+      mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes(':generateContent')) {
+          if (url.includes('gemini-3.6-flash')) {
+            return makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON));
+          }
+          return notFound('unavailable');
+        }
+        if (url.includes('/v1beta/models?') || /\/v1beta\/models\?key=/.test(url)) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              models: [
+                {
+                  name: 'models/gemini-3.6-flash',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+              ],
+            }),
+          };
+        }
+        return notFound('unexpected');
+      });
 
       const client = new GeminiTranslationClient({
         apiKey: 'key-test',
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         fetchFn: mockFetch,
       });
+      const result = await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
 
-      await expect(client.translateTranscript(BASE_TRANSCRIPT)).rejects.toMatchObject({
-        message: expect.stringContaining('fallback missing'),
-      });
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result.segments[0].translatedText).toBe('Xin chào mọi người, chào mừng đến kênh.');
+      const urls = mockFetch.mock.calls.map((call) => String(call[0]));
+      expect(urls.some((url) => url.includes('/v1beta/models?') && !url.includes('generateContent'))).toBe(
+        true,
+      );
+      expect(urls.some((url) => url.includes('gemini-3.6-flash') && url.includes('generateContent'))).toBe(
+        true,
+      );
     });
   });
 

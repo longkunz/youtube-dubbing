@@ -12,7 +12,7 @@ export type { TranslationClient, TranslateOptions, FetchFn };
 export interface GeminiTranslationClientOptions {
   /** Explicit Gemini API key. When omitted the client reads from chrome.storage.local. */
   apiKey?: string;
-  /** Gemini model to use. Defaults to "gemini-2.5-flash". */
+  /** Gemini model to use. Defaults to "gemini-3.8-flash". */
   model?: string;
   /**
    * Injectable fetch function. Defaults to the global `fetch`.
@@ -49,10 +49,16 @@ interface GeminiApiResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-const FALLBACK_MODEL = 'gemini-1.5-flash';
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+const FALLBACK_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
+] as const;
 const DEFAULT_TARGET_LANGUAGE = 'vi';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const MAX_LISTED_MODEL_RETRIES = 3;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,6 +110,19 @@ function toGeminiHttpError(status: number, apiMessage?: string): TranslationErro
 
 function isNotFoundError(err: unknown): boolean {
   return err instanceof TranslationError && err.httpStatus === 404;
+}
+
+function normalizeListedModelName(name: string): string {
+  return name.replace(/^models\//, '').trim();
+}
+
+function isUsableListedFlashModel(name: string, methods: string[] | undefined): boolean {
+  if (!name) return false;
+  if (!methods?.includes('generateContent')) return false;
+  const id = name.toLowerCase();
+  if (!id.includes('flash')) return false;
+  if (/(image|tts|live|audio|embedding|imagen|veo|lyria)/.test(id)) return false;
+  return true;
 }
 
 /** Strip optional markdown code-block fences (```json ... ```) from text. */
@@ -244,14 +263,62 @@ export class GeminiTranslationClient implements TranslationClient {
   }
 
   private async callGeminiApi(apiKey: string, prompt: string): Promise<string> {
-    const primaryModel = this.model;
-    try {
-      return await this.requestGenerateContent(apiKey, primaryModel, prompt);
-    } catch (err) {
-      if (isNotFoundError(err) && primaryModel !== FALLBACK_MODEL) {
-        return await this.requestGenerateContent(apiKey, FALLBACK_MODEL, prompt);
+    const tried = new Set<string>();
+    const candidates = [
+      this.model,
+      ...FALLBACK_MODELS.filter((model) => model !== this.model),
+    ];
+
+    let lastError: unknown;
+    for (const model of candidates) {
+      if (tried.has(model)) continue;
+      tried.add(model);
+      try {
+        return await this.requestGenerateContent(apiKey, model, prompt);
+      } catch (err) {
+        lastError = err;
+        if (!isNotFoundError(err)) throw err;
       }
-      throw err;
+    }
+
+    const listed = await this.listGenerateContentFlashModels(apiKey);
+    let listedAttempts = 0;
+    for (const model of listed) {
+      if (tried.has(model)) continue;
+      tried.add(model);
+      listedAttempts += 1;
+      try {
+        return await this.requestGenerateContent(apiKey, model, prompt);
+      } catch (err) {
+        lastError = err;
+        if (!isNotFoundError(err)) throw err;
+      }
+      if (listedAttempts >= MAX_LISTED_MODEL_RETRIES) break;
+    }
+
+    throw lastError;
+  }
+
+  private async listGenerateContentFlashModels(apiKey: string): Promise<string[]> {
+    const url = `${GEMINI_API_BASE}?key=${encodeURIComponent(apiKey)}`;
+    try {
+      const response = await this.fetchFn(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) return [];
+      const body = (await response.json()) as {
+        models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+      };
+      return (body.models ?? [])
+        .map((model) => ({
+          name: normalizeListedModelName(model.name ?? ''),
+          methods: model.supportedGenerationMethods,
+        }))
+        .filter((model) => isUsableListedFlashModel(model.name, model.methods))
+        .map((model) => model.name);
+    } catch {
+      return [];
     }
   }
 

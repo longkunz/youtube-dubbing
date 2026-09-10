@@ -25,7 +25,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings.groqApiKey).toBe('');
     expect(settings.ttsProvider).toBe('edge-tts');
     expect(settings.enableFallback).toBe(true);
-    expect(settings.geminiModel).toBe('gemini-2.5-flash');
+    expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
 
   it('persists and merges updated settings', async () => {
@@ -38,7 +38,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings.geminiApiKey).toBe('test-gemini-key-123');
     expect(settings.groqApiKey).toBe('test-groq-key-456');
     expect(settings.ttsProvider).toBe('edge-tts'); // remains default
-    expect(settings.geminiModel).toBe('gemini-2.5-flash');
+    expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
 
   it('persists an explicit geminiModel selection', async () => {
@@ -199,7 +199,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     const pingBtn = screen.getByRole('button', { name: /ping connection/i });
     fireEvent.click(pingBtn);
 
-    expect(mockPing).toHaveBeenCalledWith('AIzaSyTestGeminiKey', 'gemini-2.5-flash');
+    expect(mockPing).toHaveBeenCalledWith('AIzaSyTestGeminiKey', 'gemini-3.8-flash');
 
     expect(await screen.findByText(/ONLINE \(110ms\)/i)).toBeInTheDocument();
   });
@@ -291,15 +291,15 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     expect(screen.queryByTestId('gemini-model-select')).not.toBeInTheDocument();
   });
 
-  it('renders Gemini model presets and defaults to gemini-2.5-flash', async () => {
+  it('renders Gemini model presets and defaults to gemini-3.8-flash', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
-    expect(modelSelect).toHaveValue('gemini-2.5-flash');
-    expect(screen.getByRole('option', { name: 'gemini-2.5-flash' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'gemini-1.5-flash' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'gemini-2.0-flash' })).toBeInTheDocument();
+    expect(modelSelect).toHaveValue('gemini-3.8-flash');
     expect(screen.getByRole('option', { name: 'gemini-3.8-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-3.5-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-3.5-flash-lite' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-2.5-flash' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'custom' })).toBeInTheDocument();
     expect(screen.queryByTestId('gemini-model-custom-input')).not.toBeInTheDocument();
   });
@@ -311,19 +311,19 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     fireEvent.change(modelSelect, { target: { value: 'custom' } });
 
     expect(screen.getByTestId('gemini-model-custom-input')).toBeInTheDocument();
-    expect(screen.getByTestId('gemini-model-custom-input')).toHaveValue('gemini-2.5-flash');
+    expect(screen.getByTestId('gemini-model-custom-input')).toHaveValue('gemini-3.8-flash');
   });
 
   it('persists a preset Gemini model on save', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
-    fireEvent.change(modelSelect, { target: { value: 'gemini-1.5-flash' } });
+    fireEvent.change(modelSelect, { target: { value: 'gemini-3.5-flash' } });
     fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
 
     await waitFor(async () => {
       const saved = await getSettings();
-      expect(saved.geminiModel).toBe('gemini-1.5-flash');
+      expect(saved.geminiModel).toBe('gemini-3.5-flash');
     });
   });
 
