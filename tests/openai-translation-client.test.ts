@@ -401,6 +401,17 @@ describe('createTranslationClient factory', () => {
     expect(client).toBeInstanceOf(GeminiTranslationClient);
   });
 
+  it('wires geminiModel from settings into GeminiTranslationClient', () => {
+    const client = createTranslationClient({
+      translationProvider: 'gemini',
+      geminiApiKey: 'AIzaSyTest',
+      geminiModel: 'gemini-3.8-flash',
+    });
+
+    expect(client).toBeInstanceOf(GeminiTranslationClient);
+    expect((client as GeminiTranslationClient).model).toBe('gemini-3.8-flash');
+  });
+
   it('defaults to OpenAiCompatibleTranslationClient or GeminiTranslationClient when provider unspecified', () => {
     const client = createTranslationClient({});
     expect(client).toBeDefined();

@@ -25,6 +25,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings.groqApiKey).toBe('');
     expect(settings.ttsProvider).toBe('edge-tts');
     expect(settings.enableFallback).toBe(true);
+    expect(settings.geminiModel).toBe('gemini-2.5-flash');
   });
 
   it('persists and merges updated settings', async () => {
@@ -37,6 +38,13 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings.geminiApiKey).toBe('test-gemini-key-123');
     expect(settings.groqApiKey).toBe('test-groq-key-456');
     expect(settings.ttsProvider).toBe('edge-tts'); // remains default
+    expect(settings.geminiModel).toBe('gemini-2.5-flash');
+  });
+
+  it('persists an explicit geminiModel selection', async () => {
+    await saveSettings({ geminiModel: 'gemini-1.5-flash' });
+    const settings = await getSettings();
+    expect(settings.geminiModel).toBe('gemini-1.5-flash');
   });
 
   describe('pingGeminiConnection', () => {
@@ -79,6 +87,45 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
       const res = await pingGeminiConnection('invalid-key', mockFetch as unknown as typeof fetch);
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/API key not valid/i);
+    });
+
+    it('pings the selected Gemini model endpoint', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      });
+
+      const res = await pingGeminiConnection(
+        'valid-api-key',
+        mockFetch as unknown as typeof fetch,
+        'gemini-3.8-flash',
+      );
+      expect(res.ok).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('gemini-3.8-flash'),
+        expect.anything(),
+      );
+      expect(mockFetch.mock.calls[0][0]).toContain('key=valid-api-key');
+    });
+
+    it('trims whitespace from the API key and model in the ping URL', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      });
+
+      await pingGeminiConnection(
+        '  valid-api-key  ',
+        mockFetch as unknown as typeof fetch,
+        '  gemini-2.5-flash  ',
+      );
+
+      const calledUrl = mockFetch.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('gemini-2.5-flash');
+      expect(calledUrl).toContain('key=valid-api-key');
+      expect(calledUrl).not.toContain('%20');
     });
   });
 });
@@ -152,7 +199,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     const pingBtn = screen.getByRole('button', { name: /ping connection/i });
     fireEvent.click(pingBtn);
 
-    expect(mockPing).toHaveBeenCalledWith('AIzaSyTestGeminiKey');
+    expect(mockPing).toHaveBeenCalledWith('AIzaSyTestGeminiKey', 'gemini-2.5-flash');
 
     expect(await screen.findByText(/ONLINE \(110ms\)/i)).toBeInTheDocument();
   });
@@ -233,6 +280,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     fireEvent.change(providerSelect, { target: { value: 'gemini' } });
     expect(providerSelect).toHaveValue('gemini');
     expect(screen.getByTestId('gemini-key-input')).toBeInTheDocument();
+    expect(screen.getByTestId('gemini-model-select')).toBeInTheDocument();
 
     // Switch to OpenAI-Compatible Proxy
     fireEvent.change(providerSelect, { target: { value: 'openai-compatible' } });
@@ -240,6 +288,89 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     expect(screen.getByTestId('openai-endpoint-input')).toBeInTheDocument();
     expect(screen.getByTestId('openai-model-input')).toBeInTheDocument();
     expect(screen.getByTestId('openai-key-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('gemini-model-select')).not.toBeInTheDocument();
+  });
+
+  it('renders Gemini model presets and defaults to gemini-2.5-flash', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    expect(modelSelect).toHaveValue('gemini-2.5-flash');
+    expect(screen.getByRole('option', { name: 'gemini-2.5-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-1.5-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-2.0-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-3.8-flash' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'custom' })).toBeInTheDocument();
+    expect(screen.queryByTestId('gemini-model-custom-input')).not.toBeInTheDocument();
+  });
+
+  it('reveals a custom model input when custom is selected', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    fireEvent.change(modelSelect, { target: { value: 'custom' } });
+
+    expect(screen.getByTestId('gemini-model-custom-input')).toBeInTheDocument();
+    expect(screen.getByTestId('gemini-model-custom-input')).toHaveValue('gemini-2.5-flash');
+  });
+
+  it('persists a preset Gemini model on save', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    fireEvent.change(modelSelect, { target: { value: 'gemini-1.5-flash' } });
+    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
+
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.geminiModel).toBe('gemini-1.5-flash');
+    });
+  });
+
+  it('persists a custom Gemini model identifier on save', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    fireEvent.change(modelSelect, { target: { value: 'custom' } });
+    fireEvent.change(screen.getByTestId('gemini-model-custom-input'), {
+      target: { value: 'gemini-exp-1206' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
+
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.geminiModel).toBe('gemini-exp-1206');
+    });
+  });
+
+  it('loads a non-preset saved model as the custom option', async () => {
+    await saveSettings({ geminiModel: 'gemini-exp-1206' });
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    await waitFor(() => {
+      expect(modelSelect).toHaveValue('custom');
+    });
+    expect(screen.getByTestId('gemini-model-custom-input')).toHaveValue('gemini-exp-1206');
+  });
+
+  it('pings using the selected Gemini model', async () => {
+    const mockPing = vi.fn().mockResolvedValue({
+      ok: true,
+      latencyMs: 42,
+    });
+
+    render(<OptionsDashboard segmentCache={segmentCache} pingFn={mockPing} />);
+
+    const modelSelect = await screen.findByTestId('gemini-model-select');
+    fireEvent.change(modelSelect, { target: { value: 'gemini-3.8-flash' } });
+    fireEvent.change(screen.getByTestId('gemini-key-input'), {
+      target: { value: 'AIzaSyTestGeminiKey' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /ping connection/i }));
+
+    expect(mockPing).toHaveBeenCalledWith('AIzaSyTestGeminiKey', 'gemini-3.8-flash');
+    expect(await screen.findByText(/ONLINE \(42ms\)/i)).toBeInTheDocument();
   });
 
   it('saves OpenAI proxy settings to storage', async () => {

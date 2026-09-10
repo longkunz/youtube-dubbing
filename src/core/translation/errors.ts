@@ -14,10 +14,12 @@ export enum TranslationErrorCode {
  */
 export class TranslationError extends Error {
   readonly code: TranslationErrorCode;
+  readonly httpStatus?: number;
 
-  constructor(code: TranslationErrorCode, message: string) {
+  constructor(code: TranslationErrorCode, message: string, httpStatus?: number) {
     super(message);
     this.name = 'TranslationError';
     this.code = code;
+    this.httpStatus = httpStatus;
   }
 }

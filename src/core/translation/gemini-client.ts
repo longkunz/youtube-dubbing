@@ -12,7 +12,7 @@ export type { TranslationClient, TranslateOptions, FetchFn };
 export interface GeminiTranslationClientOptions {
   /** Explicit Gemini API key. When omitted the client reads from chrome.storage.local. */
   apiKey?: string;
-  /** Gemini model to use. Defaults to "gemini-2.0-flash". */
+  /** Gemini model to use. Defaults to "gemini-2.5-flash". */
   model?: string;
   /**
    * Injectable fetch function. Defaults to the global `fetch`.
@@ -49,13 +49,62 @@ interface GeminiApiResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+const FALLBACK_MODEL = 'gemini-1.5-flash';
 const DEFAULT_TARGET_LANGUAGE = 'vi';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function sanitizeModel(model?: string): string {
+  const trimmed = model?.trim();
+  return trimmed || DEFAULT_MODEL;
+}
+
+async function readGeminiErrorMessage(response: Response): Promise<string | undefined> {
+  if (typeof response.json !== 'function') return undefined;
+  try {
+    const data = (await response.json()) as { error?: { message?: string } };
+    const message = data?.error?.message;
+    return typeof message === 'string' && message.trim() ? message : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toGeminiHttpError(status: number, apiMessage?: string): TranslationError {
+  if (status === 429) {
+    return new TranslationError(
+      TranslationErrorCode.RATE_LIMITED,
+      apiMessage
+        ? `Gemini API rate limit exceeded (HTTP 429). ${apiMessage}`
+        : 'Gemini API rate limit exceeded (HTTP 429). Please try again later.',
+      status,
+    );
+  }
+  if (status === 401 || status === 403) {
+    return new TranslationError(
+      TranslationErrorCode.AUTH_ERROR,
+      apiMessage
+        ? `Gemini API authentication error (HTTP ${status}). ${apiMessage}`
+        : `Gemini API authentication error (HTTP ${status}). Check your API key.`,
+      status,
+    );
+  }
+  return new TranslationError(
+    TranslationErrorCode.NETWORK_ERROR,
+    apiMessage
+      ? `Gemini API returned unexpected status ${status}. ${apiMessage}`
+      : `Gemini API returned unexpected status ${status}.`,
+    status,
+  );
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return err instanceof TranslationError && err.httpStatus === 404;
+}
 
 /** Strip optional markdown code-block fences (```json ... ```) from text. */
 function stripMarkdownFences(text: string): string {
@@ -106,7 +155,7 @@ async function readApiKeyFromStorage(): Promise<string | undefined> {
  * Deep module: batch-translates a Transcript or Segment[] using the Gemini REST API.
  *
  * Architecture: ADR-0001 (100% client-side BYOK — direct fetch to Gemini REST, no server).
- * Strategy: ADR-0003 (full upfront batch translation with gemini-2.0-flash).
+ * Strategy: ADR-0003 (full upfront batch translation with a Gemini Flash model).
  */
 export class GeminiTranslationClient implements TranslationClient {
   private readonly apiKey: string | undefined;
@@ -115,7 +164,7 @@ export class GeminiTranslationClient implements TranslationClient {
 
   constructor(options: GeminiTranslationClientOptions = {}) {
     this.apiKey = options.apiKey;
-    this.model = options.model ?? DEFAULT_MODEL;
+    this.model = sanitizeModel(options.model);
     this.fetchFn = options.fetchFn ?? defaultFetch;
   }
 
@@ -150,7 +199,7 @@ export class GeminiTranslationClient implements TranslationClient {
     const apiKey = await this.resolveApiKey();
 
     const prompt = buildPrompt(segments, targetLanguage);
-    const rawText = await this.callGeminiApi(apiKey, prompt);
+    const rawText = await this.callGeminiApi(apiKey.trim(), prompt);
     const payload = this.parseGeminiResponse(rawText);
 
     // Map by segment id for O(1) lookup
@@ -195,7 +244,23 @@ export class GeminiTranslationClient implements TranslationClient {
   }
 
   private async callGeminiApi(apiKey: string, prompt: string): Promise<string> {
-    const url = `${GEMINI_API_BASE}/${this.model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const primaryModel = this.model;
+    try {
+      return await this.requestGenerateContent(apiKey, primaryModel, prompt);
+    } catch (err) {
+      if (isNotFoundError(err) && primaryModel !== FALLBACK_MODEL) {
+        return await this.requestGenerateContent(apiKey, FALLBACK_MODEL, prompt);
+      }
+      throw err;
+    }
+  }
+
+  private async requestGenerateContent(
+    apiKey: string,
+    model: string,
+    prompt: string,
+  ): Promise<string> {
+    const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
     let response: Response;
     try {
@@ -214,22 +279,8 @@ export class GeminiTranslationClient implements TranslationClient {
     }
 
     if (!response.ok) {
-      if (response.status === 429) {
-        throw new TranslationError(
-          TranslationErrorCode.RATE_LIMITED,
-          'Gemini API rate limit exceeded (HTTP 429). Please try again later.',
-        );
-      }
-      if (response.status === 401 || response.status === 403) {
-        throw new TranslationError(
-          TranslationErrorCode.AUTH_ERROR,
-          `Gemini API authentication error (HTTP ${response.status}). Check your API key.`,
-        );
-      }
-      throw new TranslationError(
-        TranslationErrorCode.NETWORK_ERROR,
-        `Gemini API returned unexpected status ${response.status}.`,
-      );
+      const apiMessage = await readGeminiErrorMessage(response);
+      throw toGeminiHttpError(response.status, apiMessage);
     }
 
     let body: GeminiApiResponse;

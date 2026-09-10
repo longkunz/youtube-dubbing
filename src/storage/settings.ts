@@ -9,9 +9,19 @@
 
 import { defaultFetch } from '../core/default-fetch';
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
+export const GEMINI_MODEL_PRESETS = [
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash',
+  'gemini-3.8-flash',
+] as const;
+
 export interface UserSettings {
   translationProvider: 'gemini' | 'openai-compatible';
   geminiApiKey: string;
+  geminiModel: string;
   openaiEndpoint: string;
   openaiModel: string;
   openaiApiKey: string;
@@ -25,6 +35,7 @@ export interface UserSettings {
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   translationProvider: 'gemini',
   geminiApiKey: '',
+  geminiModel: DEFAULT_GEMINI_MODEL,
   openaiEndpoint: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
   openaiApiKey: '',
@@ -114,7 +125,8 @@ export async function resetSettingsForTesting(): Promise<void> {
  */
 export async function pingGeminiConnection(
   apiKey: string,
-  fetchFn: typeof fetch = defaultFetch as typeof fetch
+  fetchFn: typeof fetch = defaultFetch as typeof fetch,
+  model: string = DEFAULT_GEMINI_MODEL,
 ): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   if (!apiKey || !apiKey.trim()) {
     return {
@@ -125,7 +137,8 @@ export async function pingGeminiConnection(
   }
 
   const startTime = performance.now();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`;
+  const trimmedModel = model.trim() || DEFAULT_GEMINI_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(trimmedModel)}?key=${encodeURIComponent(apiKey.trim())}`;
 
   try {
     const response = await fetchFn(url, {

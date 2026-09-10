@@ -24,6 +24,7 @@ export function createTranslationClient(
 
   return new GeminiTranslationClient({
     apiKey: settings?.geminiApiKey,
+    model: settings?.geminiModel,
     fetchFn: overrides?.fetchFn,
   });
 }

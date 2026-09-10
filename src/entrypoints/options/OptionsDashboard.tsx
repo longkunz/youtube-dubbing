@@ -5,9 +5,12 @@ import {
   pingGeminiConnection,
   pingOpenAiConnection,
   DEFAULT_USER_SETTINGS,
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_PRESETS,
   type UserSettings,
   type PingOpenAiResult,
 } from '../../storage/settings';
+import { defaultFetch } from '../../core/default-fetch';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
 import { BackgroundDubbingTtsClient } from '../../core/tts/background-tts-client';
 import {
@@ -32,9 +35,16 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
+function isGeminiPreset(model: string): boolean {
+  return (GEMINI_MODEL_PRESETS as readonly string[]).includes(model);
+}
+
 export interface OptionsDashboardProps {
   segmentCache?: SegmentCache;
-  pingFn?: (apiKey: string) => Promise<{ ok: boolean; latencyMs: number; error?: string }>;
+  pingFn?: (
+    apiKey: string,
+    model?: string,
+  ) => Promise<{ ok: boolean; latencyMs: number; error?: string }>;
   pingOpenAiFn?: (
     endpoint: string,
     model: string,
@@ -62,6 +72,8 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 }) => {
   const [translationProvider, setTranslationProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [geminiModel, setGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
+  const [geminiModelIsCustom, setGeminiModelIsCustom] = useState(false);
   const [openaiEndpoint, setOpenaiEndpoint] = useState('https://api.openai.com/v1');
   const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
@@ -100,6 +112,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       if (!active) return;
       setTranslationProvider(saved.translationProvider || 'gemini');
       setGeminiApiKey(saved.geminiApiKey || '');
+      const loadedModel = saved.geminiModel || DEFAULT_GEMINI_MODEL;
+      setGeminiModel(loadedModel);
+      setGeminiModelIsCustom(!isGeminiPreset(loadedModel));
       setOpenaiEndpoint(saved.openaiEndpoint || 'https://api.openai.com/v1');
       setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
       setOpenaiApiKey(saved.openaiApiKey || '');
@@ -134,7 +149,8 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const handleSaveCredentials = async () => {
     await saveSettings({
       translationProvider,
-      geminiApiKey,
+      geminiApiKey: geminiApiKey.trim(),
+      geminiModel: geminiModel.trim() || DEFAULT_GEMINI_MODEL,
       openaiEndpoint,
       openaiModel,
       openaiApiKey,
@@ -158,8 +174,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
         const res = await pingExecutor(openaiEndpoint, openaiModel, openaiApiKey);
         setPingStatus({ loading: false, result: res });
       } else {
-        const pingExecutor = pingFn ?? pingGeminiConnection;
-        const res = await pingExecutor(geminiApiKey);
+        const resolvedModel = geminiModel.trim() || DEFAULT_GEMINI_MODEL;
+        const res = pingFn
+          ? await pingFn(geminiApiKey, resolvedModel)
+          : await pingGeminiConnection(
+              geminiApiKey,
+              defaultFetch as typeof fetch,
+              resolvedModel,
+            );
         setPingStatus({ loading: false, result: res });
       }
     } catch (err) {
@@ -400,38 +422,91 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   </div>
                 </>
               ) : (
-                /* Gemini API Key */
-                <div>
-                  <label
-                    htmlFor="gemini-key"
-                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                  >
-                    Gemini API Key (Primary Dubbing Engine)
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      id="gemini-key"
-                      data-testid="gemini-key-input"
-                      type={showGeminiKey ? 'text' : 'password'}
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      placeholder="AIzaSy..."
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                    />
-                    <button
-                      type="button"
-                      aria-label="Toggle Gemini API Key visibility"
-                      onClick={() => setShowGeminiKey((prev) => !prev)}
-                      className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+                <>
+                  <div>
+                    <label
+                      htmlFor="gemini-model"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
                     >
-                      {showGeminiKey ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
+                      Gemini Model
+                    </label>
+                    <select
+                      id="gemini-model"
+                      data-testid="gemini-model-select"
+                      aria-label="Gemini Model"
+                      value={geminiModelIsCustom ? 'custom' : geminiModel}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (next === 'custom') {
+                          setGeminiModelIsCustom(true);
+                        } else {
+                          setGeminiModelIsCustom(false);
+                          setGeminiModel(next);
+                        }
+                      }}
+                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                    >
+                      {GEMINI_MODEL_PRESETS.map((preset) => (
+                        <option key={preset} value={preset}>
+                          {preset}
+                        </option>
+                      ))}
+                      <option value="custom">custom</option>
+                    </select>
                   </div>
-                </div>
+
+                  {geminiModelIsCustom ? (
+                    <div>
+                      <label
+                        htmlFor="gemini-model-custom"
+                        className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                      >
+                        Custom Model Identifier
+                      </label>
+                      <input
+                        id="gemini-model-custom"
+                        data-testid="gemini-model-custom-input"
+                        type="text"
+                        value={geminiModel}
+                        onChange={(e) => setGeminiModel(e.target.value)}
+                        placeholder="gemini-..."
+                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                      />
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label
+                      htmlFor="gemini-key"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      Gemini API Key (Primary Dubbing Engine)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        id="gemini-key"
+                        data-testid="gemini-key-input"
+                        type={showGeminiKey ? 'text' : 'password'}
+                        value={geminiApiKey}
+                        onChange={(e) => setGeminiApiKey(e.target.value)}
+                        placeholder="AIzaSy..."
+                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Toggle Gemini API Key visibility"
+                        onClick={() => setShowGeminiKey((prev) => !prev)}
+                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+                      >
+                        {showGeminiKey ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* Groq / OpenAI API Key */}
