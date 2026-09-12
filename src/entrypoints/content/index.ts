@@ -1,10 +1,13 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { getExtensionRuntime } from '@/core/extension-runtime';
 import { mountHud, HudInstance } from './mount';
+import { mountSubtitleOverlay, resetSubtitleMountForTesting } from './subtitle-mount';
 import {
   extractVideoId,
   getCoordinatorState,
+  getSubOnlyState,
   stopDubbingPipeline,
+  stopSubOnlyPipeline,
 } from './orchestrator-coordinator';
 import { toggleCommandCenter, closeCommandCenter } from './command-center-mount';
 
@@ -18,6 +21,13 @@ let activeInstance: HudInstance | null = null;
  * explicitly activates dubbing via the Split Pill Control.
  */
 export function tryMount(): HudInstance | null {
+  const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+  if (player) {
+    try {
+      mountSubtitleOverlay(player as HTMLElement);
+    } catch {}
+  }
+
   const controls = document.querySelector('.ytp-right-controls') as HTMLElement | null;
   if (!controls) {
     if (activeInstance) {
@@ -25,15 +35,22 @@ export function tryMount(): HudInstance | null {
       activeInstance = null;
       stopDubbingPipeline();
     }
+    stopSubOnlyPipeline();
     return null;
   }
 
   const currentVideoId = extractVideoId();
   const runningId = getCoordinatorState().activeVideoId;
-  if (runningId && runningId !== currentVideoId) {
+  const runningSubId = getSubOnlyState().activeVideoId;
+  if (
+    (runningId && runningId !== currentVideoId) ||
+    (runningSubId && runningSubId !== currentVideoId)
+  ) {
     stopDubbingPipeline();
+    stopSubOnlyPipeline();
     activeInstance?.updateProps?.({
       isEnabled: false,
+      isSubtitlesEnabled: false,
       activeSegment: null,
       orchestrator: undefined,
     });
@@ -50,6 +67,7 @@ export function tryMount(): HudInstance | null {
     activeInstance.unmount();
     activeInstance = null;
     stopDubbingPipeline();
+    stopSubOnlyPipeline();
   }
 
   // Mount fresh — in dormant state, no pipeline launch
@@ -59,6 +77,8 @@ export function tryMount(): HudInstance | null {
 
 export function resetActiveInstanceForTesting(): void {
   stopDubbingPipeline();
+  stopSubOnlyPipeline();
+  resetSubtitleMountForTesting();
   if (activeInstance) {
     activeInstance.unmount();
     activeInstance = null;
@@ -105,6 +125,7 @@ export default defineContentScript({
     // do NOT auto-start pipeline (On-Demand Activation, ADR-0008).
     window.addEventListener('yt-navigate-finish', () => {
       closeCommandCenter();
+      stopSubOnlyPipeline();
       tryMount();
     });
 

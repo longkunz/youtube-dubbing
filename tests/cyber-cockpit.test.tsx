@@ -192,4 +192,38 @@ describe('CyberCockpit', () => {
     rerender(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
     expect(screen.getByText('GEMINI-3.8-FLASH')).toBeInTheDocument();
   });
+
+  it('toggles dual subtitles switch and invokes onToggleSubtitles callback', () => {
+    const onToggleSubtitles = vi.fn();
+    const { rerender } = render(
+      <CyberCockpit
+        isOpen={true}
+        isSubtitlesEnabled={true}
+        onToggleSubtitles={onToggleSubtitles}
+        onClose={vi.fn()}
+      />
+    );
+
+    const toggle = screen.getByTestId('dual-subtitles-toggle');
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(toggle).toHaveTextContent('SUBS: ON');
+
+    fireEvent.click(toggle);
+    expect(onToggleSubtitles).toHaveBeenCalledWith(false);
+
+    rerender(
+      <CyberCockpit
+        isOpen={true}
+        isSubtitlesEnabled={false}
+        onToggleSubtitles={onToggleSubtitles}
+        onClose={vi.fn()}
+      />
+    );
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).toHaveTextContent('SUBS: OFF');
+
+    fireEvent.click(toggle);
+    expect(onToggleSubtitles).toHaveBeenCalledWith(true);
+  });
 });

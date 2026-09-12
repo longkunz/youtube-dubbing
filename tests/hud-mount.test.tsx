@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mountHud } from '@/entrypoints/content/mount';
 import { tryMount, resetActiveInstanceForTesting } from '@/entrypoints/content/index';
+import { mountSubtitleOverlay } from '@/entrypoints/content/subtitle-mount';
 import { getCoordinatorState } from '@/entrypoints/content/orchestrator-coordinator';
 import { act } from 'react';
 import { fireEvent } from '@testing-library/react';
@@ -216,6 +217,11 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
       destroy: vi.fn(),
     };
 
+    const moviePlayer = document.createElement('div');
+    moviePlayer.id = 'movie_player';
+    document.body.appendChild(moviePlayer);
+    const subInstance = mountSubtitleOverlay(moviePlayer);
+
     let instance: ReturnType<typeof mountHud> = null as any;
     await act(async () => {
       instance = mountHud(playerContainer, mockOrchestrator);
@@ -223,11 +229,16 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
 
     const shadowRoot = instance.shadowRoot;
 
-    // SubtitleOverlay should be visible in Shadow DOM with translated text
-    const subtitlePill = shadowRoot.querySelector('.subtitle-pill');
-    expect(subtitlePill).not.toBeNull();
-    expect(subtitlePill?.textContent).toContain('Xin chào thế giới');
-    expect(subtitlePill?.textContent).toContain('Hello world');
+    // Per ADR-0012: HUD shadowRoot does NOT render SubtitleOverlay (prevents in-controls clutter)
+    expect(shadowRoot.querySelector('.subtitle-pill')).toBeNull();
+
+    // The unified bilingual overlay inside #movie_player receives the active segment
+    await vi.waitFor(() => {
+      const subtitlePill = subInstance.shadowRoot.querySelector('.subtitle-pill');
+      expect(subtitlePill).not.toBeNull();
+      expect(subtitlePill?.textContent).toContain('Xin chào thế giới');
+      expect(subtitlePill?.textContent).toContain('Hello world');
+    });
 
     // Open Cockpit
     const triggerPill = shadowRoot.querySelector('.hyper-pill-trigger') as HTMLElement;
@@ -272,8 +283,8 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     });
     expect(mockOrchestrator.handlePause).toHaveBeenCalled();
 
-    // SubtitleOverlay should now be hidden because visible=false
-    expect(shadowRoot.querySelector('.subtitle-pill')).toBeNull();
+    // SubtitleOverlay should now be hidden
+    expect(subInstance.shadowRoot.querySelector('.subtitle-pill')).toBeNull();
 
     // Toggle On/Off Switch back ON -> resumes dubbing
     await act(async () => {

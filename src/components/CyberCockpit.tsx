@@ -18,6 +18,8 @@ export interface CyberCockpitProps {
   onClose: () => void;
   isEnabled?: boolean;
   onToggleEnabled?: (enabled: boolean) => void;
+  isSubtitlesEnabled?: boolean;
+  onToggleSubtitles?: (enabled: boolean) => void;
   isMultiSpeakerEnabled?: boolean;
   onToggleMultiSpeaker?: (enabled: boolean) => void;
   targetLanguage?: string;
@@ -38,6 +40,8 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   onClose,
   isEnabled = true,
   onToggleEnabled,
+  isSubtitlesEnabled,
+  onToggleSubtitles,
   isMultiSpeakerEnabled = false,
   onToggleMultiSpeaker,
   targetLanguage = 'vi',
@@ -53,8 +57,16 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
 }) => {
   const [internalVoice, setInternalVoice] = useState('vi-VN-HoaiMyNeural');
   const [internalMultiSpeaker, setInternalMultiSpeaker] = useState(isMultiSpeakerEnabled);
+  const [internalSubtitles, setInternalSubtitles] = useState(isSubtitlesEnabled ?? true);
   const activeVoice = selectedVoiceId ?? internalVoice;
   const isMultiSpeaker = isMultiSpeakerEnabled !== undefined ? isMultiSpeakerEnabled : internalMultiSpeaker;
+  const isSubtitles = isSubtitlesEnabled !== undefined ? isSubtitlesEnabled : internalSubtitles;
+
+  const handleToggleSubtitles = () => {
+    const next = !isSubtitles;
+    setInternalSubtitles(next);
+    onToggleSubtitles?.(next);
+  };
 
   const handleToggleMultiSpeaker = () => {
     const next = !isMultiSpeaker;
@@ -170,6 +182,22 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
           >
             <span className="toggle-slider" />
             <span className="toggle-text">{isEnabled ? 'DUB: ON' : 'DUB: OFF'}</span>
+          </button>
+        </div>
+
+        <div className="cyber-toggle-wrapper">
+          <span className="control-label">Dual Subtitles</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isSubtitles}
+            aria-label="Toggle Dual Subtitles"
+            data-testid="dual-subtitles-toggle"
+            className={`cyber-toggle-switch ${isSubtitles ? 'active' : ''}`}
+            onClick={handleToggleSubtitles}
+          >
+            <span className="toggle-slider" />
+            <span className="toggle-text">{isSubtitles ? 'SUBS: ON' : 'SUBS: OFF'}</span>
           </button>
         </div>
 

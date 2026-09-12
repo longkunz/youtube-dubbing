@@ -13,6 +13,9 @@ import {
   type PingBackendResult,
   type TranslationProvider,
   type TtsProvider,
+  type SubtitleDisplayMode,
+  type SubtitleLineOrder,
+  type SubtitleFontSize,
 } from '../../storage/settings';
 import { sendExtensionMessage } from '../../core/extension-runtime';
 import { defaultFetch } from '../../core/default-fetch';
@@ -101,6 +104,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
   const [enableFallback, setEnableFallback] = useState(true);
+  const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<SubtitleDisplayMode>('bilingual');
+  const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('translated-first');
+  const [subtitleFontSize, setSubtitleFontSize] = useState<SubtitleFontSize>('standard');
 
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showBackendKey, setShowBackendKey] = useState(false);
@@ -145,6 +151,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
       setEnableFallback(saved.enableFallback ?? true);
+      setSubtitleDisplayMode(saved.subtitleDisplayMode || 'bilingual');
+      setSubtitleLineOrder(saved.subtitleLineOrder || 'translated-first');
+      setSubtitleFontSize(saved.subtitleFontSize || 'standard');
     });
 
     const loadMetrics = async () => {
@@ -183,6 +192,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       ttsPitch,
       ttsRate,
       enableFallback,
+      subtitleDisplayMode,
+      subtitleLineOrder,
+      subtitleFontSize,
     });
     setSaveStatus('Credentials saved');
     setTimeout(() => {
@@ -827,7 +839,98 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
             </div>
           </section>
 
-          {/* Section 3: Sub-atomic Cache Vault */}
+          {/* Section 3: Parallel Caption Overlay */}
+          <section className="relative rounded-xl border border-[#00f2fe]/30 bg-[#0a0e1a]/85 backdrop-blur-xl p-6 shadow-[0_0_24px_rgba(0,242,254,0.08)]">
+            <div className="flex items-center justify-between border-b border-[#00f2fe]/20 pb-3 mb-6">
+              <div className="flex items-center gap-2.5">
+                <Sliders className="w-5 h-5 text-[#00f2fe]" />
+                <h2 className="text-lg font-mono font-bold tracking-wide text-white">
+                  PARALLEL CAPTION OVERLAY
+                </h2>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00f2fe]/10 text-[#00f2fe] border border-[#00f2fe]/30">
+                DUAL SUBTITLES
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div>
+                <label
+                  htmlFor="subtitle-display-mode"
+                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                >
+                  Display Mode
+                </label>
+                <select
+                  id="subtitle-display-mode"
+                  data-testid="subtitle-display-mode-select"
+                  aria-label="Subtitle Display Mode"
+                  value={subtitleDisplayMode}
+                  onChange={(e) => {
+                    const next = e.target.value as SubtitleDisplayMode;
+                    setSubtitleDisplayMode(next);
+                    void saveSettings({ subtitleDisplayMode: next });
+                  }}
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                >
+                  <option value="bilingual">Bilingual (Both)</option>
+                  <option value="translated-only">Translated Only</option>
+                  <option value="original-only">Original Only</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="subtitle-line-order"
+                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                >
+                  Line Order
+                </label>
+                <select
+                  id="subtitle-line-order"
+                  data-testid="subtitle-line-order-select"
+                  aria-label="Subtitle Line Order"
+                  value={subtitleLineOrder}
+                  onChange={(e) => {
+                    const next = e.target.value as SubtitleLineOrder;
+                    setSubtitleLineOrder(next);
+                    void saveSettings({ subtitleLineOrder: next });
+                  }}
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                >
+                  <option value="translated-first">Translated First (Top)</option>
+                  <option value="original-first">Original First (Top)</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="subtitle-font-size"
+                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                >
+                  Font Size
+                </label>
+                <select
+                  id="subtitle-font-size"
+                  data-testid="subtitle-font-size-select"
+                  aria-label="Subtitle Font Size"
+                  value={subtitleFontSize}
+                  onChange={(e) => {
+                    const next = e.target.value as SubtitleFontSize;
+                    setSubtitleFontSize(next);
+                    void saveSettings({ subtitleFontSize: next });
+                  }}
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                >
+                  <option value="small">Small (14px)</option>
+                  <option value="standard">Standard (18px)</option>
+                  <option value="large">Large (22px)</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 4: Sub-atomic Cache Vault */}
           <section className="relative rounded-xl border border-[#00ff88]/30 bg-[#0a0e1a]/85 backdrop-blur-xl p-6 shadow-[0_0_24px_rgba(0,255,136,0.08)]">
             <div className="flex items-center justify-between border-b border-[#00ff88]/20 pb-3 mb-6">
               <div className="flex items-center gap-2.5">

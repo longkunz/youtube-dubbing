@@ -7,3 +7,4 @@ dist/
 server/models/
 server/cache/
 server/.env
+youtube-dubbing-extension-architecture.md

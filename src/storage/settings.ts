@@ -34,6 +34,10 @@ export const YOUTUBE_CAPTION_TRANSLATION = 'youtube-caption-translation' as cons
 
 export type TtsProvider = 'piper' | 'edge' | 'web-speech';
 
+export type SubtitleDisplayMode = 'bilingual' | 'translated-only' | 'original-only';
+export type SubtitleLineOrder = 'translated-first' | 'original-first';
+export type SubtitleFontSize = 'small' | 'standard' | 'large';
+
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<any>;
 
 export interface UserSettings {
@@ -52,6 +56,9 @@ export interface UserSettings {
   enableFallback: boolean;
   backendUrl: string;
   backendApiKey: string;
+  subtitleDisplayMode: SubtitleDisplayMode;
+  subtitleLineOrder: SubtitleLineOrder;
+  subtitleFontSize: SubtitleFontSize;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -69,6 +76,9 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   enableFallback: true,
   backendUrl: 'http://127.0.0.1:8787',
   backendApiKey: '',
+  subtitleDisplayMode: 'bilingual',
+  subtitleLineOrder: 'translated-first',
+  subtitleFontSize: 'standard',
 };
 
 export function normalizeSettings(input: Partial<UserSettings> | undefined): UserSettings {
@@ -78,6 +88,15 @@ export function normalizeSettings(input: Partial<UserSettings> | undefined): Use
     merged.ttsProvider = 'edge';
   } else if (rawTts === 'backend') {
     merged.ttsProvider = 'piper';
+  }
+  if (!merged.subtitleDisplayMode) {
+    merged.subtitleDisplayMode = 'bilingual';
+  }
+  if (!merged.subtitleLineOrder) {
+    merged.subtitleLineOrder = 'translated-first';
+  }
+  if (!merged.subtitleFontSize) {
+    merged.subtitleFontSize = 'standard';
   }
   return merged;
 }
@@ -106,6 +125,19 @@ export async function getSettings(): Promise<UserSettings> {
   return normalizeSettings(inMemorySettings);
 }
 
+export type SettingsListener = (settings: UserSettings) => void;
+const settingsListeners = new Set<SettingsListener>();
+
+/**
+ * Subscribe to settings changes. Returns an unsubscribe function.
+ */
+export function subscribeToSettings(listener: SettingsListener): () => void {
+  settingsListeners.add(listener);
+  return () => {
+    settingsListeners.delete(listener);
+  };
+}
+
 /**
  * Persist partial or full user settings to chrome.storage.local
  * and update in-memory state.
@@ -118,6 +150,14 @@ export async function saveSettings(settings: Partial<UserSettings>): Promise<voi
   });
 
   inMemorySettings = { ...updated };
+
+  for (const listener of settingsListeners) {
+    try {
+      listener(updated);
+    } catch (e) {
+      console.error('[AetherDub] Error in settings listener:', e);
+    }
+  }
 
   if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
     await new Promise<void>((resolve, reject) => {

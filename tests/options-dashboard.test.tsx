@@ -680,3 +680,41 @@ describe('Edge-TTS voice preview (TTS ENGINE FORGE)', () => {
   });
 });
 
+describe('OptionsDashboard — Parallel Caption Overlay Settings (Issue #18)', () => {
+  let segmentCache: SegmentCache;
+
+  beforeEach(async () => {
+    segmentCache = new SegmentCache();
+    await resetSettingsForTesting();
+  });
+
+  afterEach(() => {
+    segmentCache.close();
+  });
+
+  it('allows configuring and persisting subtitle display mode, line order, and font size', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const displayModeSelect = await screen.findByTestId('subtitle-display-mode-select');
+    const lineOrderSelect = await screen.findByTestId('subtitle-line-order-select');
+    const fontSizeSelect = await screen.findByTestId('subtitle-font-size-select');
+
+    expect(displayModeSelect).toHaveValue('bilingual');
+    expect(lineOrderSelect).toHaveValue('translated-first');
+    expect(fontSizeSelect).toHaveValue('standard');
+
+    fireEvent.change(displayModeSelect, { target: { value: 'translated-only' } });
+    fireEvent.change(lineOrderSelect, { target: { value: 'original-first' } });
+    fireEvent.change(fontSizeSelect, { target: { value: 'large' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
+
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.subtitleDisplayMode).toBe('translated-only');
+      expect(saved.subtitleLineOrder).toBe('original-first');
+      expect(saved.subtitleFontSize).toBe('large');
+    });
+  });
+});
+

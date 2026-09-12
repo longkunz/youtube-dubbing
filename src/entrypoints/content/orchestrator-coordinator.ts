@@ -27,6 +27,7 @@ import {
 } from '@/storage/settings';
 import type { Transcript, Segment, CaptionTrack } from '@/types/domain';
 import type { HudInstance } from './mount';
+import { getActiveSubtitleInstance, type SubtitleOverlayInstance } from './subtitle-mount';
 
 /**
  * Derive the cockpit Engine badge from user settings so the HUD reflects
@@ -641,6 +642,11 @@ export function stopDubbingPipeline(): void {
   state.translationAbort = null;
   state.activeVideoId = null;
   state.activeTargetLanguage = null;
+
+  if (!subOnlyState.activeVideoId) {
+    const subInstance = getActiveSubtitleInstance();
+    subInstance?.setSegment(null);
+  }
 }
 
 /**
@@ -1274,11 +1280,29 @@ async function _initOrchestrator(
   instance.updateOrchestrator?.(orchestrator);
   instance.updateProps?.({ hasCaptions: true, isNoCaptions: false });
 
-  const onTimeUpdate = () => orchestrator.handleTimeUpdate(video.currentTime);
-  const onSeek = () => orchestrator.handleSeek(video.currentTime);
-  const onPlay = () => orchestrator.handlePlay();
+  const syncDubbingSubtitles = () => {
+    const seg = findActiveSegment(transcript.segments, video.currentTime);
+    getActiveSubtitleInstance()?.setSegment(seg);
+  };
+
+  const onTimeUpdate = () => {
+    orchestrator.handleTimeUpdate(video.currentTime);
+    syncDubbingSubtitles();
+  };
+  const onSeek = () => {
+    orchestrator.handleSeek(video.currentTime);
+    syncDubbingSubtitles();
+  };
+  const onPlay = () => {
+    orchestrator.handlePlay();
+    syncDubbingSubtitles();
+  };
   const onPause = () => orchestrator.handlePause();
   const onRateChange = () => orchestrator.handleRateChange(video.playbackRate);
+
+  const subInstance = getActiveSubtitleInstance();
+  subInstance?.setVisible(true);
+  syncDubbingSubtitles();
 
   video.addEventListener('timeupdate', onTimeUpdate);
   video.addEventListener('seeking', onSeek);
@@ -1294,12 +1318,355 @@ async function _initOrchestrator(
     video.removeEventListener('play', onPlay);
     video.removeEventListener('pause', onPause);
     video.removeEventListener('ratechange', onRateChange);
+    if (!subOnlyState.activeVideoId) {
+      getActiveSubtitleInstance()?.setSegment(null);
+    }
   };
 
   if (!video.paused) {
     orchestrator.handlePlay();
     orchestrator.handleTimeUpdate(video.currentTime);
+    syncDubbingSubtitles();
   }
 
   return orchestrator;
 }
+
+// ── Sub-Only Mode (Parallel Captions Without TTS, Issue #18 / ADR-0012) ──────
+
+export interface SubOnlyState {
+  activeVideoId: string | null;
+  activeTargetLanguage: string | null;
+  transcript: Transcript | null;
+  cleanupListeners: (() => void) | null;
+  translationAbort: AbortController | null;
+  subtitleInstance?: SubtitleOverlayInstance | null;
+}
+
+const subOnlyState: SubOnlyState = {
+  activeVideoId: null,
+  activeTargetLanguage: null,
+  transcript: null,
+  cleanupListeners: null,
+  translationAbort: null,
+  subtitleInstance: null,
+};
+
+export function getSubOnlyState(): SubOnlyState {
+  return subOnlyState;
+}
+
+export function stopSubOnlyPipeline(): void {
+  if (subOnlyState.cleanupListeners) {
+    subOnlyState.cleanupListeners();
+    subOnlyState.cleanupListeners = null;
+  }
+  subOnlyState.translationAbort?.abort();
+  subOnlyState.translationAbort = null;
+  subOnlyState.transcript = null;
+  subOnlyState.activeVideoId = null;
+  subOnlyState.activeTargetLanguage = null;
+
+  const subInstance = subOnlyState.subtitleInstance ?? getActiveSubtitleInstance();
+  subInstance?.setVisible(false);
+  subInstance?.setSegment(null);
+  subOnlyState.subtitleInstance = null;
+}
+
+/**
+ * Fast binary search to find the active segment corresponding to currentTime in O(log N).
+ * Preserves deterministic boundary resolution: if currentTime >= startTime && currentTime <= endTime,
+ * returns the segment. If contiguous, returns the first segment matching the boundary.
+ */
+export function findActiveSegment(segments: Segment[], currentTime: number): Segment | null {
+  if (!segments || segments.length === 0) return null;
+
+  let low = 0;
+  let high = segments.length - 1;
+  let candidateIndex = -1;
+
+  // Find the earliest segment where endTime >= currentTime
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (segments[mid].endTime >= currentTime) {
+      candidateIndex = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  if (candidateIndex !== -1) {
+    const s = segments[candidateIndex];
+    if (currentTime >= s.startTime && currentTime <= s.endTime) {
+      return s;
+    }
+  }
+
+  return null;
+}
+
+function bindSubOnlyListeners(
+  video: HTMLVideoElement,
+  transcript: Transcript,
+  subInstance?: SubtitleOverlayInstance | null,
+  instance?: HudInstance | null,
+): void {
+  if (subOnlyState.cleanupListeners) {
+    subOnlyState.cleanupListeners();
+    subOnlyState.cleanupListeners = null;
+  }
+
+  subOnlyState.transcript = transcript;
+
+  const onSync = () => {
+    const time = video.currentTime;
+    const seg = findActiveSegment(transcript.segments, time);
+    subInstance?.setSegment(seg);
+    instance?.updateProps?.({ activeSegment: seg });
+  };
+
+  video.addEventListener('timeupdate', onSync);
+  video.addEventListener('seeking', onSync);
+  video.addEventListener('seeked', onSync);
+
+  subOnlyState.cleanupListeners = () => {
+    video.removeEventListener('timeupdate', onSync);
+    video.removeEventListener('seeking', onSync);
+    video.removeEventListener('seeked', onSync);
+  };
+
+  onSync();
+}
+
+/**
+ * Fetch native captions and translate them without engaging Whisper fallback or TTS.
+ */
+async function fetchSubOnlyTranscript(
+  videoId: string,
+  targetLanguage: string,
+  signal?: AbortSignal,
+): Promise<Transcript | null> {
+  if (signal?.aborted) return null;
+
+  const settings = await getSettings().catch(() => null);
+  if (signal?.aborted) return null;
+
+  const translationProvider = settings?.translationProvider ?? 'self-hosted';
+  const fetcher = new TranscriptFetcher();
+
+  let captionTracks: CaptionTrack[] | undefined;
+  let playerResponse: any;
+
+  try {
+    const bridged = readBridgedAudioTracks(videoId);
+    if (bridged.length > 0) {
+      captionTracks = bridged;
+    } else if (
+      typeof document !== 'undefined' &&
+      document.documentElement.hasAttribute('data-aetherdub-at')
+    ) {
+      captionTracks = await waitForAudioCaptionTracks(videoId, 2000).catch(() => []);
+    }
+    if (signal?.aborted) return null;
+    if (!captionTracks?.length) {
+      playerResponse = await getPlayerResponse(videoId).catch(() => null);
+    }
+  } catch {
+    // Proceed to fetch attempts
+  }
+
+  if (signal?.aborted) return null;
+
+  const preferredLang = getActiveCaptionState().activeLanguageCode || 'en';
+
+  if (translationProvider === YOUTUBE_CAPTION_TRANSLATION) {
+    try {
+      const translated = await fetcher.fetchYoutubeCaptionTranslation(videoId, {
+        playerResponse,
+        captionTracks,
+        preferredLang,
+        targetLanguage,
+      });
+      if (signal?.aborted) return null;
+      if (translated && translated.segments.length > 0) {
+        return translated;
+      }
+      return null;
+    } catch {
+      // Sub-Only mode MUST NOT invoke Whisper fallback!
+      return null;
+    }
+  }
+
+  if (signal?.aborted) return null;
+
+  let rawTranscript: Transcript | null = null;
+  try {
+    rawTranscript = await fetcher.fetchTranscript(videoId, {
+      playerResponse,
+      captionTracks,
+      preferredLang,
+    });
+  } catch {
+    // Sub-Only mode MUST NOT invoke Whisper fallback!
+    return null;
+  }
+
+  if (signal?.aborted || !rawTranscript || !rawTranscript.segments.length) {
+    return null;
+  }
+
+  try {
+    const full = await translateViaBackground(rawTranscript, targetLanguage, {
+      signal,
+    });
+    if (signal?.aborted) return null;
+    return full;
+  } catch (err) {
+    if (signal?.aborted) return null;
+    console.warn('[AetherDub] Sub-Only translation failed:', err);
+    return null;
+  }
+}
+
+/**
+ * activateSubOnly — activate Parallel Caption Overlay without speech synthesis (Sub-Only Mode).
+ *
+ * TTS synthesis and audio ducking are completely bypassed.
+ * Does not pause the host video, providing near-instantaneous subtitle presentation.
+ * If the video lacks native captions, ceases without calling Groq Whisper.
+ */
+export async function activateSubOnly(
+  video: HTMLVideoElement,
+  instance?: HudInstance | null,
+  hud?: ActivationHudCallbacks | null,
+  signal?: AbortSignal,
+  videoId?: string,
+  requestedTargetLanguage: string = 'vi',
+  options?: {
+    subtitleInstance?: SubtitleOverlayInstance | null;
+    _pipelineFn?: (
+      instance: HudInstance | null | undefined,
+      video: HTMLVideoElement,
+      targetLanguage: string,
+      signal?: AbortSignal,
+    ) => Promise<Transcript | null>;
+  },
+): Promise<ActivationResult> {
+  const vid = videoId ?? extractVideoId();
+  if (!vid) {
+    hud?.setError('No video ID found');
+    return 'error';
+  }
+
+  const targetLanguage = requestedTargetLanguage.trim() || 'vi';
+  const subInstance = options?.subtitleInstance ?? getActiveSubtitleInstance();
+  subOnlyState.subtitleInstance = subInstance;
+
+  // Link caller abortSignal with internal subOnlyState.translationAbort
+  subOnlyState.translationAbort?.abort();
+  const subAbortController = new AbortController();
+  subOnlyState.translationAbort = subAbortController;
+
+  const handleCallerAbort = () => {
+    subAbortController.abort();
+  };
+  if (signal) {
+    if (signal.aborted) {
+      subAbortController.abort();
+    } else {
+      signal.addEventListener('abort', handleCallerAbort, { once: true });
+    }
+  }
+  const effectiveSignal = subAbortController.signal;
+
+  // 1. Cache hit check
+  const cache = new SegmentCache();
+  const settings = await getSettings().catch(() => null);
+  const translationProvider = settings?.translationProvider ?? 'self-hosted';
+  const cachedTranscript = await cache
+    .getTranscript(vid, targetLanguage, translationProvider)
+    .catch(() => null);
+
+  if (effectiveSignal.aborted) {
+    signal?.removeEventListener('abort', handleCallerAbort);
+    return 'cancelled';
+  }
+
+  const cacheHit = !!(cachedTranscript && cachedTranscript.segments.length > 0);
+
+  if (cacheHit) {
+    bindSubOnlyListeners(video, cachedTranscript!, subInstance, instance);
+    subInstance?.setVisible(true);
+    instance?.updateProps?.({ hasCaptions: true, isNoCaptions: false, isSubtitlesEnabled: true });
+    hud?.setEnabled(true);
+    hud?.setPreparationMode(null);
+    hud?.setError(null);
+    subOnlyState.activeVideoId = vid;
+    subOnlyState.activeTargetLanguage = targetLanguage;
+    signal?.removeEventListener('abort', handleCallerAbort);
+    return 'cache-hit';
+  }
+
+  // 2. Cache miss: do NOT pause video (instantaneous activation without buffering)
+  hud?.setPreparationMode(null);
+
+  if (effectiveSignal.aborted) {
+    signal?.removeEventListener('abort', handleCallerAbort);
+    return 'cancelled';
+  }
+
+  try {
+    let transcript: Transcript | null = null;
+
+    if (options?._pipelineFn) {
+      transcript = await options._pipelineFn(instance, video, targetLanguage, effectiveSignal);
+    } else {
+      transcript = await fetchSubOnlyTranscript(vid, targetLanguage, effectiveSignal);
+    }
+
+    if (effectiveSignal.aborted) {
+      signal?.removeEventListener('abort', handleCallerAbort);
+      return 'cancelled';
+    }
+
+    if (!transcript || !transcript.segments.length) {
+      subInstance?.setVisible(false);
+      instance?.updateProps?.({ hasCaptions: false, isNoCaptions: true });
+      hud?.setEnabled(false);
+      hud?.setError('Could not load captions for this video');
+      signal?.removeEventListener('abort', handleCallerAbort);
+      return 'error';
+    }
+
+    bindSubOnlyListeners(video, transcript, subInstance, instance);
+    subInstance?.setVisible(true);
+    instance?.updateProps?.({ hasCaptions: true, isNoCaptions: false, isSubtitlesEnabled: true });
+    hud?.setEnabled(true);
+    hud?.setPreparationMode(null);
+    hud?.setError(null);
+    subOnlyState.activeVideoId = vid;
+    subOnlyState.activeTargetLanguage = targetLanguage;
+
+    const complete = transcript.segments.every((s) => Boolean(s.translatedText));
+    if (complete) {
+      Promise.resolve(cache.saveTranscript(transcript, translationProvider)).catch(() => {});
+    }
+
+    signal?.removeEventListener('abort', handleCallerAbort);
+    return 'success';
+  } catch (err) {
+    signal?.removeEventListener('abort', handleCallerAbort);
+    if (effectiveSignal.aborted) {
+      return 'cancelled';
+    }
+    console.error('[AetherDub] activateSubOnly error:', err);
+    subInstance?.setVisible(false);
+    instance?.updateProps?.({ hasCaptions: false, isNoCaptions: true });
+    hud?.setEnabled(false);
+    hud?.setError('Could not load captions for this video');
+    return 'error';
+  }
+}
+

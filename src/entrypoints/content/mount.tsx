@@ -7,8 +7,11 @@ import { getSettings, saveSettings } from '@/storage/settings';
 import {
   activateDubbing,
   deactivateDubbing,
+  activateSubOnly,
+  stopSubOnlyPipeline,
   type ActivationHudCallbacks,
 } from './orchestrator-coordinator';
+import { getActiveSubtitleInstance } from './subtitle-mount';
 import { openCommandCenter } from './command-center-mount';
 
 export interface HudInstance {
@@ -89,11 +92,19 @@ export function mountHud(
     },
   };
 
+  // AbortController for the current sub-only activation attempt
+  let subOnlyController: AbortController | null = null;
+
   const handleActivateDubbing = (targetLanguage: string) => {
+    // Turning dubbing on cancels any running sub-only pipeline
+    subOnlyController?.abort();
+    subOnlyController = null;
+    stopSubOnlyPipeline();
+
     const video = resolveVideo();
     if (!video) return;
 
-    currentProps = { ...currentProps, targetLanguage };
+    currentProps = { ...currentProps, targetLanguage, isEnabled: true };
     // Cancel any in-flight activation
     activationController?.abort();
     activationController = new AbortController();
@@ -123,6 +134,47 @@ export function mountHud(
       : undefined;
     activationController = null;
     deactivateDubbing(hudCallbacks, abortFn);
+    getActiveSubtitleInstance()?.setVisible(false);
+    getActiveSubtitleInstance()?.setSegment(null);
+  };
+
+  const handleToggleSubtitles = (enabled: boolean) => {
+    currentProps = { ...currentProps, isSubtitlesEnabled: enabled };
+    const isDubbingActive = Boolean(
+      currentProps.isEnabled || currentProps.isPreparing || currentOrchestrator
+    );
+
+    if (enabled) {
+      if (!isDubbingActive) {
+        const video = resolveVideo();
+        if (video) {
+          subOnlyController?.abort();
+          subOnlyController = new AbortController();
+          const targetLang = currentProps.targetLanguage || 'vi';
+          activateSubOnly(
+            video,
+            instance,
+            hudCallbacks,
+            subOnlyController.signal,
+            undefined,
+            targetLang,
+          ).catch((err) => {
+            console.error('[AetherDub] activateSubOnly threw unexpectedly:', err);
+          });
+        }
+      } else {
+        getActiveSubtitleInstance()?.setVisible(true);
+      }
+    } else {
+      subOnlyController?.abort();
+      subOnlyController = null;
+      if (!isDubbingActive) {
+        stopSubOnlyPipeline();
+      } else {
+        getActiveSubtitleInstance()?.setVisible(false);
+      }
+    }
+    renderComponent();
   };
 
   const handleResumePlayback = () => {
@@ -143,6 +195,7 @@ export function mountHud(
           onDeactivateDubbing={handleDeactivateDubbing}
           onCancelPreparation={handleDeactivateDubbing}
           onResumePlayback={handleResumePlayback}
+          onToggleSubtitles={handleToggleSubtitles}
         />
       );
     }
@@ -164,6 +217,9 @@ export function mountHud(
       mounted = false;
       activationController?.abort();
       activationController = null;
+      subOnlyController?.abort();
+      subOnlyController = null;
+      stopSubOnlyPipeline();
       if (root) {
         root.unmount();
         root = null;

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { FloatingPill } from './FloatingPill';
 import { CyberCockpit } from './CyberCockpit';
-import { SubtitleOverlay } from './SubtitleOverlay';
 import { NotificationBanner } from './NotificationBanner';
 import { PreparationOverlay, type PreparationOverlayMode } from './PreparationOverlay';
+import { getActiveSubtitleInstance } from '@/entrypoints/content/subtitle-mount';
 
 import type { DubbingOrchestrator, Segment, VoiceProfile } from '../types/domain';
 import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from '../core/tts/voices';
@@ -33,6 +33,9 @@ export interface HudContainerProps {
   showOriginalText?: boolean;
   isMultiSpeakerEnabled?: boolean;
   onToggleMultiSpeaker?: (enabled: boolean) => void;
+  initialIsSubtitlesEnabled?: boolean;
+  isSubtitlesEnabled?: boolean;
+  onToggleSubtitles?: (enabled: boolean) => void;
 
   // Caption resilience flags
   hasCaptions?: boolean;
@@ -88,6 +91,9 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   showOriginalText = true,
   isMultiSpeakerEnabled: controlledIsMultiSpeaker,
   onToggleMultiSpeaker,
+  initialIsSubtitlesEnabled = true,
+  isSubtitlesEnabled: controlledIsSubtitles,
+  onToggleSubtitles,
   hasCaptions,
   isNoCaptions,
   onConfigureSettings,
@@ -104,6 +110,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   // Default to true if orchestrator passed directly, false for passive mount (no orchestrator)
   const defaultEnabled = initialIsEnabled !== undefined ? initialIsEnabled : Boolean(orchestrator);
   const [isEnabledState, setIsEnabledState] = useState(defaultEnabled);
+  const [isSubtitlesState, setIsSubtitlesState] = useState(initialIsSubtitlesEnabled);
   const [isPreparingState, setIsPreparingState] = useState(false);
   const [targetLanguageState, setTargetLanguageState] = useState(initialTargetLanguage);
   const [selectedVoiceIdState, setSelectedVoiceIdState] = useState(initialVoiceId);
@@ -138,6 +145,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         if (orchestrator.getActiveSegment) {
           const seg = orchestrator.getActiveSegment();
           setActiveSegmentState(seg);
+          getActiveSubtitleInstance()?.setSegment(seg);
         }
         if (orchestrator.isDiarizationEnabled) {
           setIsMultiSpeakerState(orchestrator.isDiarizationEnabled());
@@ -170,6 +178,48 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const isPlaying = controlledIsPlaying !== undefined ? controlledIsPlaying : isPlayingState;
   const isDucked = controlledIsDucked !== undefined ? controlledIsDucked : isDuckedState;
   const isMultiSpeaker = controlledIsMultiSpeaker !== undefined ? controlledIsMultiSpeaker : isMultiSpeakerState;
+  const isSubtitles = controlledIsSubtitles !== undefined ? controlledIsSubtitles : isSubtitlesState;
+
+  useEffect(() => {
+    if (activeSegment !== undefined) {
+      getActiveSubtitleInstance()?.setSegment(activeSegment);
+    }
+  }, [activeSegment]);
+
+  const handleToggleSubtitles = (enabled: boolean) => {
+    setIsSubtitlesState(enabled);
+    if (onToggleSubtitles) {
+      onToggleSubtitles(enabled);
+    } else {
+      const isDubbingActive = Boolean(isEnabled || isPreparing || orchestrator);
+      if (enabled) {
+        if (!isDubbingActive) {
+          const video =
+            (document.querySelector('video.html5-main-video') as HTMLVideoElement | null) ||
+            (document.querySelector('video') as HTMLVideoElement | null);
+          if (video) {
+            import('@/entrypoints/content/orchestrator-coordinator')
+              .then(({ activateSubOnly }) => {
+                activateSubOnly(video, null, null, undefined, undefined, targetLanguage).catch(() => {});
+              })
+              .catch(() => {});
+          }
+        } else {
+          getActiveSubtitleInstance()?.setVisible(true);
+        }
+      } else {
+        if (!isDubbingActive) {
+          import('@/entrypoints/content/orchestrator-coordinator')
+            .then(({ stopSubOnlyPipeline }) => {
+              stopSubOnlyPipeline();
+            })
+            .catch(() => {});
+        } else {
+          getActiveSubtitleInstance()?.setVisible(false);
+        }
+      }
+    }
+  };
 
   // Derive active preparation mode for overlay
   const effectivePreparationMode: PreparationOverlayMode | null =
@@ -321,6 +371,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         onClose={handleClose}
         isEnabled={isEnabled}
         onToggleEnabled={handleToggleEnabled}
+        isSubtitlesEnabled={isSubtitles}
+        onToggleSubtitles={handleToggleSubtitles}
         isMultiSpeakerEnabled={isMultiSpeaker}
         onToggleMultiSpeaker={handleToggleMultiSpeaker}
         targetLanguage={targetLanguage}
@@ -333,11 +385,6 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         isDucked={isDucked}
         onOpenSettings={handleOpenSettings}
         engineLabel={engineLabel}
-      />
-      <SubtitleOverlay
-        segment={activeSegment}
-        visible={isEnabled}
-        showOriginalText={showOriginalText}
       />
 
       {effectivePreparationMode && (
