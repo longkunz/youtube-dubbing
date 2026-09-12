@@ -69,7 +69,7 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         if not text:
             raise HTTPException(status_code=400, detail="text is required")
         if len(text) > 500:
-            raise HTTPException(status_code=400, detail="text cannot exceed 500 characters")
+            text = text[:500].rsplit(" ", 1)[0] or text[:500]
         fmt = str(payload.get("format") or "mp3").lower()
         if fmt != "mp3":
             raise HTTPException(status_code=400, detail="format must be mp3")

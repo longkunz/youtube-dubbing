@@ -97,7 +97,7 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text,
+            text: text.length > 500 ? text.slice(0, 500) : text,
             lang: voice.locale ?? 'vi-VN',
             voice: voice.voiceKey ?? voice.id,
             rate: voice.rate ?? '+0%',

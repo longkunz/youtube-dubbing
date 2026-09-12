@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.lang import normalize_lang
 from app.main import create_app
-from app.translate import MarianBatchTranslator
+from app.translate import MarianBatchTranslator, collapse_stutter
 
 
 class FakeTranslator:
@@ -138,14 +138,20 @@ class _FakeTokenizer:
 
 
 class _FakeCt2:
-    def translate_batch(self, tokens):
+    def translate_batch(self, tokens, **kwargs):
         class _Result:
             hypotheses = [["▁Xin", "▁chào"]]
 
         assert tokens == [["▁Hello", "</s>"]]
+        assert kwargs.get("max_decoding_length") == 80
+        assert kwargs.get("no_repeat_ngram_size") == 3
         return [_Result()]
 
 
 def test_marian_batch_translator_uses_hf_tokenizer_not_spm():
     translator = MarianBatchTranslator(_FakeCt2(), _FakeTokenizer())
     assert translator.translate_batch(["Hello"]) == ["Xin chào"]
+
+
+def test_collapse_stutter_stops_bye_loops():
+    assert collapse_stutter("Vì vậy, bây bây bây bây bây bây bây bây.") == "Vì vậy, bây."

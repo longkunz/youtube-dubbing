@@ -68,10 +68,12 @@ def test_empty_text_is_400():
     assert response.status_code == 400
 
 
-def test_text_over_500_chars_is_400():
-    client, _ = make_client()
-    response = client.post("/v1/tts", headers=auth(), json={"text": "a" * 501, "format": "mp3"})
-    assert response.status_code == 400
+def test_text_over_500_chars_is_truncated_not_rejected():
+    client, engine = make_client()
+    response = client.post("/v1/tts", headers=auth(), json={"text": ("bây " * 200).strip(), "format": "mp3"})
+    assert response.status_code == 200
+    assert engine.piper_calls
+    assert len(engine.piper_calls[0]) <= 500
 
 
 def test_non_mp3_format_is_400():

@@ -1,4 +1,18 @@
+import re
+
 from app.cache import FileCache
+
+_STUTTER = re.compile(r"\b(\S+)(?:\s+\1){2,}\b", re.UNICODE)
+
+
+def collapse_stutter(text: str) -> str:
+    """Collapse 'bây bây bây bây' loops that small Marian models emit."""
+    previous = None
+    current = text.strip()
+    while previous != current:
+        previous = current
+        current = _STUTTER.sub(r"\1", current)
+    return current
 
 
 class MarianBatchTranslator:
@@ -31,11 +45,17 @@ class MarianBatchTranslator:
             self._tokenizer.convert_ids_to_tokens(self._tokenizer.encode(text))
             for text in texts
         ]
-        results = self._ct2.translate_batch(tokens)
-        return [
-            self._tokenizer.decode(self._tokenizer.convert_tokens_to_ids(item.hypotheses[0]))
-            for item in results
-        ]
+        results = self._ct2.translate_batch(
+            tokens,
+            max_decoding_length=80,
+            repetition_penalty=1.3,
+            no_repeat_ngram_size=3,
+        )
+        decoded = []
+        for item in results:
+            raw = self._tokenizer.decode(self._tokenizer.convert_tokens_to_ids(item.hypotheses[0]))
+            decoded.append(collapse_stutter(raw))
+        return decoded
 
 
 class CTranslate2Translator:
