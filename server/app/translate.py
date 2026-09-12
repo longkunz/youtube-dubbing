@@ -1,5 +1,41 @@
 from app.cache import FileCache
-from app.lang import normalize_lang
+
+
+class MarianBatchTranslator:
+    """CTranslate2 Marian weights + Hugging Face tokenizer (not source.spm).
+
+    `ct2-transformers-converter` writes model.bin and does not copy SentencePiece
+    files. Official CTranslate2 usage is AutoTokenizer.encode → translate_batch.
+    """
+
+    HF_MODEL = "Helsinki-NLP/opus-mt-en-vi"
+
+    def __init__(self, ct2, tokenizer):
+        self._ct2 = ct2
+        self._tokenizer = tokenizer
+
+    @classmethod
+    def load(cls, model_path: str, cache_dir: str | None = None):
+        import ctranslate2
+        from transformers import AutoTokenizer
+
+        ct2 = ctranslate2.Translator(model_path, device="cpu")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+        except Exception:
+            tokenizer = AutoTokenizer.from_pretrained(cls.HF_MODEL, cache_dir=cache_dir)
+        return cls(ct2, tokenizer)
+
+    def translate_batch(self, texts: list[str]) -> list[str]:
+        tokens = [
+            self._tokenizer.convert_ids_to_tokens(self._tokenizer.encode(text))
+            for text in texts
+        ]
+        results = self._ct2.translate_batch(tokens)
+        return [
+            self._tokenizer.decode(self._tokenizer.convert_tokens_to_ids(item.hypotheses[0]))
+            for item in results
+        ]
 
 
 class CTranslate2Translator:

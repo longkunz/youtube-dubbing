@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.lang import normalize_lang
 from app.main import create_app
+from app.translate import MarianBatchTranslator
 
 
 class FakeTranslator:
@@ -120,3 +121,31 @@ def test_text_over_2000_chars_is_400():
         json={"source": "en", "target": "vi", "cues": [{"id": "1", "text": "a" * 2001}]},
     )
     assert response.status_code == 400
+
+
+class _FakeTokenizer:
+    def encode(self, text: str):
+        return [1, 2]
+
+    def convert_ids_to_tokens(self, ids):
+        return ["▁Hello", "</s>"]
+
+    def convert_tokens_to_ids(self, tokens):
+        return [3, 4]
+
+    def decode(self, ids):
+        return "Xin chào"
+
+
+class _FakeCt2:
+    def translate_batch(self, tokens):
+        class _Result:
+            hypotheses = [["▁Xin", "▁chào"]]
+
+        assert tokens == [["▁Hello", "</s>"]]
+        return [_Result()]
+
+
+def test_marian_batch_translator_uses_hf_tokenizer_not_spm():
+    translator = MarianBatchTranslator(_FakeCt2(), _FakeTokenizer())
+    assert translator.translate_batch(["Hello"]) == ["Xin chào"]

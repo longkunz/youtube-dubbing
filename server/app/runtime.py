@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from app.cache import FileCache
-from app.translate import CTranslate2Translator
+from app.translate import CTranslate2Translator, MarianBatchTranslator
 from app.tts import TtsEngine
 
 
@@ -77,23 +77,9 @@ def build_runtime(model_root_str: str | None = None, cache_root_str: str | None 
     translator = None
     opus_dir = model_root / "opus-mt-en-vi"
     if (opus_dir / "model.bin").is_file():
-        import ctranslate2
-        import sentencepiece
-
-        class LiveTranslator:
-            def __init__(self, model_path: str):
-                self.ct2 = ctranslate2.Translator(model_path, device="cpu")
-                self.sp_src = sentencepiece.SentencePieceProcessor()
-                self.sp_src.load(os.path.join(model_path, "source.spm"))
-                self.sp_tgt = sentencepiece.SentencePieceProcessor()
-                self.sp_tgt.load(os.path.join(model_path, "target.spm"))
-
-            def translate_batch(self, texts: list[str]) -> list[str]:
-                tokens = [self.sp_src.encode(t, out_type=str) for t in texts]
-                results = self.ct2.translate_batch(tokens)
-                return [self.sp_tgt.decode(r.hypotheses[0]) for r in results]
-
-        translator = CTranslate2Translator(LiveTranslator(str(opus_dir)), cache=cache)
+        hf_cache = str(model_root / "hf-cache")
+        live = MarianBatchTranslator.load(str(opus_dir), cache_dir=hf_cache)
+        translator = CTranslate2Translator(live, cache=cache)
 
     tts_engine = None
     piper_model = model_root / "piper" / "vi_VN-vais1000-medium.onnx"

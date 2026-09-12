@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir . \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 ENV MODEL_ROOT=/models
 ENV CACHE_ROOT=/cache
+ENV HF_HOME=/models/hf-cache
 ENV PORT=8787
 EXPOSE 8787
 CMD ["bash", "-lc", "/app/scripts/download-models.sh && uvicorn app.main:app_from_env --host 0.0.0.0 --port 8787"]
