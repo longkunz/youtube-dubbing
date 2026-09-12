@@ -20,4 +20,5 @@ ENV CACHE_ROOT=/cache
 ENV HF_HOME=/models/hf-cache
 ENV PORT=8787
 EXPOSE 8787
-CMD ["bash", "-lc", "/app/scripts/download-models.sh && uvicorn app.main:app_from_env --host 0.0.0.0 --port 8787"]
+ENV PYTHONUNBUFFERED=1
+CMD ["bash", "-lc", "echo starting model check && /app/scripts/download-models.sh && echo starting uvicorn && uvicorn app.main:app_from_env --host 0.0.0.0 --port 8787"]

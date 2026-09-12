@@ -83,7 +83,7 @@ cp .env.example .env   # set BACKEND_API_KEY
 docker compose up --build
 ```
 
-Needs NVIDIA Container Toolkit on the Docker host. Local TTS uses MMS-TTS on GPU when CUDA is visible, otherwise Piper.
+Default is CPU (Piper). On an NVIDIA host, uncomment `gpus: all` in `server/compose.yml` so Local TTS can load MMS-TTS.
 
 Point Command Center **Backend URL** at `http://<docker-host-ip>:8787`.
 

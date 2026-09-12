@@ -66,8 +66,22 @@ def _float_to_wav_bytes(waveform, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+def _cuda_device_present() -> bool:
+    """Do not call torch.cuda.is_available() unless a device node exists.
+
+    CUDA wheels on a CPU-only host can hang inside the CUDA probe.
+    """
+    vis = os.environ.get("CUDA_VISIBLE_DEVICES", "unset")
+    if vis in ("", "-1"):
+        return False
+    return Path("/dev/nvidia0").exists()
+
+
 def try_load_mms(model_root: Path):
     """Load facebook/mms-tts-vie on CUDA. Returns None without a GPU."""
+    if not _cuda_device_present():
+        log.info("mms-tts skipped: no NVIDIA device, using Piper for local TTS")
+        return None
     try:
         import torch
         from transformers import AutoTokenizer, VitsModel

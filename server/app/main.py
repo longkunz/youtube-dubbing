@@ -104,6 +104,13 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
 def app_from_env() -> FastAPI:
     import os
     from app.runtime import build_runtime
+    print("loading runtime (translate + tts)", flush=True)
     api_key = os.environ.get("BACKEND_API_KEY", "")
     translator, tts_engine = build_runtime()
+    print(
+        "runtime ready",
+        "translate=" + ("yes" if translator else "no"),
+        "tts=" + ("yes" if tts_engine else "no"),
+        flush=True,
+    )
     return create_app(api_key=api_key, translator=translator, tts_engine=tts_engine)
