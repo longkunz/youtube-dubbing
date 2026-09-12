@@ -41,7 +41,8 @@ def edge_synth(text: str, voice: str, rate: str) -> bytes:
                 audio.extend(chunk["data"])
         return bytes(audio)
 
-    return asyncio.run(_run())
+    timeout_s = float(os.environ.get("EDGE_TIMEOUT", "8.0"))
+    return asyncio.run(asyncio.wait_for(_run(), timeout=timeout_s))
 
 
 def wav_to_mp3(data: bytes) -> bytes:

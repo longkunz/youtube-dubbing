@@ -30,6 +30,12 @@ export default defineBackground(() => {
       return false;
     }
 
+    if (msg?.action === 'RESET_TTS_BREAKER') {
+      ttsRouter.resetBreaker();
+      sendResponse({ success: true });
+      return false;
+    }
+
     if (msg?.action === 'SYNTHESIZE_TTS') {
       (async () => {
         try {

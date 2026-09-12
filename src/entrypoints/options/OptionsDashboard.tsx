@@ -14,6 +14,7 @@ import {
   type TranslationProvider,
   type TtsProvider,
 } from '../../storage/settings';
+import { sendExtensionMessage } from '../../core/extension-runtime';
 import { defaultFetch } from '../../core/default-fetch';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
 import { BackgroundDubbingTtsClient } from '../../core/tts/background-tts-client';
@@ -39,6 +40,10 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
+async function defaultResetTtsBreaker(): Promise<void> {
+  await sendExtensionMessage({ action: 'RESET_TTS_BREAKER' }, 5_000);
+}
+
 function isGeminiPreset(model: string): boolean {
   return (GEMINI_MODEL_PRESETS as readonly string[]).includes(model);
 }
@@ -58,6 +63,8 @@ export interface OptionsDashboardProps {
     url: string,
     apiKey: string
   ) => Promise<PingBackendResult>;
+  /** After a successful Self-hosted Ping, reset the worker TTS circuit breaker. */
+  resetTtsBreaker?: () => Promise<void>;
   /** Injectable Edge-TTS client for the voice preview (defaults to background proxy). */
   ttsPreviewClient?: {
     synthesize(
@@ -76,6 +83,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   pingFn,
   pingOpenAiFn,
   pingBackendFn,
+  resetTtsBreaker,
   ttsPreviewClient,
   createPreviewAudio,
 }) => {
@@ -188,6 +196,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       if (translationProvider === 'self-hosted') {
         const pingBackend = pingBackendFn ?? pingBackendConnection;
         const res = await pingBackend(backendUrl, backendApiKey);
+        if (res.ok) {
+          const reset = resetTtsBreaker ?? defaultResetTtsBreaker;
+          try {
+            await reset();
+          } catch {
+            // Options page can ping before a worker is listening.
+          }
+        }
         setPingStatus({ loading: false, result: res });
       } else if (translationProvider === 'openai-compatible') {
         const pingExecutor = pingOpenAiFn ?? pingOpenAiConnection;

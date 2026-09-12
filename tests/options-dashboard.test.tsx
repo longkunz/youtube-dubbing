@@ -448,6 +448,24 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     });
   });
 
+  it('resets the service-worker TTS breaker after a successful self-hosted ping', async () => {
+    const resetTtsBreaker = vi.fn().mockResolvedValue(undefined);
+    const pingBackendFn = vi.fn().mockResolvedValue({ ok: true, latencyMs: 42, tts: 'piper' });
+    render(
+      <OptionsDashboard
+        segmentCache={segmentCache}
+        pingBackendFn={pingBackendFn}
+        resetTtsBreaker={resetTtsBreaker}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText('Translation Provider'));
+    fireEvent.click(screen.getByRole('button', { name: /ping connection|test connection/i }));
+    await waitFor(() => {
+      expect(pingBackendFn).toHaveBeenCalled();
+      expect(resetTtsBreaker).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('saves self-hosted backend url and key and does not require gemini', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
     await waitFor(() => screen.getByLabelText('Translation Provider'));

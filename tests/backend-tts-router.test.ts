@@ -103,4 +103,21 @@ describe('BackgroundDubbingTtsClient (no in-page Edge fallback)', () => {
     const client = new BackgroundDubbingTtsClient();
     await expect(client.synthesize('Hi')).rejects.toThrow(/breaker open/);
   });
+
+  it('speaks via Web Speech on WEB_SPEECH_REQUIRED and does not return an audio blob', async () => {
+    const { sendExtensionMessage } = await import('../src/core/extension-runtime');
+    vi.mocked(sendExtensionMessage).mockResolvedValueOnce({
+      success: false,
+      code: 'WEB_SPEECH_REQUIRED',
+      error: 'Web Speech TTS selected; synthesize in page',
+    });
+    const speak = vi.fn().mockResolvedValue(undefined);
+    const { BackgroundDubbingTtsClient } = await import('../src/core/tts/background-tts-client');
+    const client = new BackgroundDubbingTtsClient({
+      webSpeech: { speak },
+    });
+    await expect(client.synthesize('Xin chào')).rejects.toThrow(/WEB_SPEECH_REQUIRED|Web Speech/);
+    expect(speak).toHaveBeenCalledTimes(1);
+    expect(speak.mock.calls[0][0]).toBe('Xin chào');
+  });
 });

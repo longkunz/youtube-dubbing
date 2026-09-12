@@ -9,9 +9,20 @@
 import type { DubbingTtsClient } from '../orchestrator/dubbing-orchestrator';
 import type { VoiceProfile } from '../../types/domain';
 import { sendExtensionMessage } from '../extension-runtime';
+import { WebSpeechFallback } from './web-speech-fallback';
 import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from './voices';
 
+export interface PageSpeech {
+  speak(text: string, voice?: VoiceProfile): Promise<void>;
+}
+
 export class BackgroundDubbingTtsClient implements DubbingTtsClient {
+  private readonly webSpeech: PageSpeech;
+
+  constructor(options?: { webSpeech?: PageSpeech }) {
+    this.webSpeech = options?.webSpeech ?? new WebSpeechFallback();
+  }
+
   async synthesize(
     text: string,
     options?: { voice?: string; rate?: string; pitch?: string }
@@ -42,6 +53,10 @@ export class BackgroundDubbingTtsClient implements DubbingTtsClient {
       },
       45_000,
     );
+    if (response?.code === 'WEB_SPEECH_REQUIRED') {
+      await this.webSpeech.speak(text, voiceProfile);
+      throw new Error(response.error || 'WEB_SPEECH_REQUIRED');
+    }
     if (!response?.success || !response.audioBase64) {
       // No in-page Edge TTS fallback: surface unavailable so the
       // orchestrator skips the cue instead of stacking voices or
