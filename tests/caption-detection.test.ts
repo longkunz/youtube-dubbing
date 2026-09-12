@@ -251,6 +251,10 @@ describe('Caption detection (CC-visible regression)', () => {
         resolveEngineLabel({ translationProvider: 'youtube-caption-translation' } as any),
       ).toBe('YOUTUBE-CC');
     });
+
+    it('returns SELF-HOST for the self-hosted provider', () => {
+      expect(resolveEngineLabel({ translationProvider: 'self-hosted' } as any)).toBe('SELF-HOST');
+    });
   });
 
   describe('timedtext throttle circuit breaker (HTTP 429)', () => {

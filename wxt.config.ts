@@ -11,8 +11,6 @@ export default defineConfig({
     host_permissions: [
       '*://*/*',
       '*://*.youtube.com/*',
-      'https://speech.platform.bing.com/*',
-      'wss://speech.platform.bing.com/*',
     ],
     options_ui: {
       page: 'options.html',

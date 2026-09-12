@@ -32,6 +32,9 @@ import type { HudInstance } from './mount';
  * the configured translation provider instead of a hardcoded label.
  */
 export function resolveEngineLabel(settings?: Partial<UserSettings> | null): string {
+  if (settings?.translationProvider === 'self-hosted') {
+    return 'SELF-HOST';
+  }
   if (settings?.translationProvider === YOUTUBE_CAPTION_TRANSLATION) {
     return 'YOUTUBE-CC';
   }

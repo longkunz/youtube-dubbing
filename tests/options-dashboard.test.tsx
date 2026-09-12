@@ -7,6 +7,7 @@ import { OptionsDashboard } from '@/entrypoints/options/OptionsDashboard';
 import {
   getSettings,
   saveSettings,
+  pingBackendConnection,
   pingGeminiConnection,
   DEFAULT_USER_SETTINGS,
   resetSettingsForTesting,
@@ -23,7 +24,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings).toEqual(DEFAULT_USER_SETTINGS);
     expect(settings.geminiApiKey).toBe('');
     expect(settings.groqApiKey).toBe('');
-    expect(settings.ttsProvider).toBe('edge-tts');
+    expect(settings.ttsProvider).toBe('backend');
     expect(settings.enableFallback).toBe(true);
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
@@ -37,7 +38,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     const settings = await getSettings();
     expect(settings.geminiApiKey).toBe('test-gemini-key-123');
     expect(settings.groqApiKey).toBe('test-groq-key-456');
-    expect(settings.ttsProvider).toBe('edge-tts'); // remains default
+    expect(settings.ttsProvider).toBe('backend'); // remains default
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
 
@@ -45,6 +46,45 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     await saveSettings({ geminiModel: 'gemini-1.5-flash' });
     const settings = await getSettings();
     expect(settings.geminiModel).toBe('gemini-1.5-flash');
+  });
+
+  it('defaults new installs to self-hosted backend TTS', async () => {
+    const settings = await getSettings();
+    expect(settings.translationProvider).toBe('self-hosted');
+    expect(settings.ttsProvider).toBe('backend');
+    expect(settings.backendUrl).toBe('http://127.0.0.1:8787');
+    expect(settings.backendApiKey).toBe('');
+  });
+
+  it('does not rewrite a stored gemini translation provider', async () => {
+    await saveSettings({ translationProvider: 'gemini', geminiApiKey: 'abc' });
+    const settings = await getSettings();
+    expect(settings.translationProvider).toBe('gemini');
+    expect(settings.geminiApiKey).toBe('abc');
+  });
+
+  it('migrates stored edge-tts provider to backend', async () => {
+    await saveSettings({ ttsProvider: 'edge-tts' as any });
+    const settings = await getSettings();
+    expect(settings.ttsProvider).toBe('backend');
+  });
+
+  it('pings health then one-cue translate', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, tts: 'piper', breaker: 'closed' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [{ id: 'ping', text: 'ok' }] }),
+      });
+    const result = await pingBackendConnection('http://127.0.0.1:8787', 'k', fetchFn);
+    expect(result.ok).toBe(true);
+    expect(result.tts).toBe('piper');
+    expect(String(fetchFn.mock.calls[0][0])).toContain('/v1/health');
+    expect(String(fetchFn.mock.calls[1][0])).toContain('/v1/translate');
+    expect(fetchFn.mock.calls[1][1].headers.Authorization).toBe('Bearer k');
   });
 
   describe('pingGeminiConnection', () => {
@@ -142,6 +182,16 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     segmentCache.close();
   });
 
+  /**
+   * Render the dashboard pre-configured to Gemini and wait for the saved-settings
+   * load to settle, so the async load cannot clobber later provider interactions.
+   */
+  async function renderGeminiDashboard(extraProps?: Partial<React.ComponentProps<typeof OptionsDashboard>>) {
+    await saveSettings({ translationProvider: 'gemini' });
+    render(<OptionsDashboard segmentCache={segmentCache} {...extraProps} />);
+    await screen.findByTestId('gemini-key-input');
+  }
+
   it('renders the Command Center title and Sci-Fi dashboard sections', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
@@ -152,7 +202,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('toggles password visibility on API key inputs', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const geminiInput = screen.getByTestId('gemini-key-input') as HTMLInputElement;
     expect(geminiInput.type).toBe('password');
@@ -166,7 +216,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('saves credentials and displays success status badge', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const geminiInput = screen.getByTestId('gemini-key-input');
     const groqInput = screen.getByTestId('groq-key-input');
@@ -191,7 +241,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
       latencyMs: 110,
     });
 
-    render(<OptionsDashboard segmentCache={segmentCache} pingFn={mockPing} />);
+    await renderGeminiDashboard({ pingFn: mockPing });
 
     const geminiInput = screen.getByTestId('gemini-key-input');
     fireEvent.change(geminiInput, { target: { value: 'AIzaSyTestGeminiKey' } });
@@ -211,7 +261,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
       error: 'Invalid API Key',
     });
 
-    render(<OptionsDashboard segmentCache={segmentCache} pingFn={mockPing} />);
+    await renderGeminiDashboard({ pingFn: mockPing });
 
     const geminiInput = screen.getByTestId('gemini-key-input');
     fireEvent.change(geminiInput, { target: { value: 'bad-key' } });
@@ -226,7 +276,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const providerSelect = screen.getByRole('combobox', { name: /tts provider|select tts engine provider/i });
-    expect(providerSelect).toHaveValue('edge-tts');
+    expect(providerSelect).toHaveValue('backend');
 
     fireEvent.change(providerSelect, { target: { value: 'web-speech' } });
     expect(providerSelect).toHaveValue('web-speech');
@@ -292,7 +342,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('renders Gemini model presets and defaults to gemini-3.8-flash', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
     expect(modelSelect).toHaveValue('gemini-3.8-flash');
@@ -305,7 +355,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('reveals a custom model input when custom is selected', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
     fireEvent.change(modelSelect, { target: { value: 'custom' } });
@@ -315,7 +365,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('persists a preset Gemini model on save', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
     fireEvent.change(modelSelect, { target: { value: 'gemini-3.5-flash' } });
@@ -328,7 +378,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('persists a custom Gemini model identifier on save', async () => {
-    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await renderGeminiDashboard();
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
     fireEvent.change(modelSelect, { target: { value: 'custom' } });
@@ -344,7 +394,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('loads a non-preset saved model as the custom option', async () => {
-    await saveSettings({ geminiModel: 'gemini-exp-1206' });
+    await saveSettings({ geminiModel: 'gemini-exp-1206', translationProvider: 'gemini' });
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
@@ -360,7 +410,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
       latencyMs: 42,
     });
 
-    render(<OptionsDashboard segmentCache={segmentCache} pingFn={mockPing} />);
+    await renderGeminiDashboard({ pingFn: mockPing });
 
     const modelSelect = await screen.findByTestId('gemini-model-select');
     fireEvent.change(modelSelect, { target: { value: 'gemini-3.8-flash' } });
@@ -374,7 +424,7 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
   });
 
   it('persists YouTube Caption Translation without requiring a Gemini key or Ping', async () => {
-    await saveSettings({ geminiApiKey: 'AIzaSyKeepMe' });
+    await saveSettings({ geminiApiKey: 'AIzaSyKeepMe', translationProvider: 'gemini' });
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const keyInput = await screen.findByTestId('gemini-key-input');
@@ -395,6 +445,27 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
       const saved = await getSettings();
       expect(saved.translationProvider).toBe('youtube-caption-translation');
       expect(saved.geminiApiKey).toBe('AIzaSyKeepMe');
+    });
+  });
+
+  it('saves self-hosted backend url and key and does not require gemini', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+    await waitFor(() => screen.getByLabelText('Translation Provider'));
+    fireEvent.change(screen.getByLabelText('Translation Provider'), {
+      target: { value: 'self-hosted' },
+    });
+    fireEvent.change(screen.getByLabelText('Backend URL'), {
+      target: { value: 'http://192.168.1.10:8787' },
+    });
+    fireEvent.change(screen.getByLabelText('Backend API Key'), {
+      target: { value: 'secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.translationProvider).toBe('self-hosted');
+      expect(saved.backendUrl).toBe('http://192.168.1.10:8787');
+      expect(saved.backendApiKey).toBe('secret');
     });
   });
 
