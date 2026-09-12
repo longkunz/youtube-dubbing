@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -88,13 +89,15 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         if app.state.tts_engine is None:
             raise HTTPException(status_code=503, detail="tts unavailable")
         try:
-            audio = app.state.tts_engine.synthesize(
+            audio = await asyncio.to_thread(
+                app.state.tts_engine.synthesize,
                 text,
                 str(payload.get("voice") or "vi-VN-HoaiMyNeural"),
                 str(payload.get("rate") or "+0%"),
                 engine,
             )
         except Exception:
+            log.exception("tts synthesis failed engine=%s chars=%s", engine, len(text))
             raise HTTPException(status_code=502, detail="tts synthesis failed")
         return Response(content=audio, media_type="audio/mpeg")
 

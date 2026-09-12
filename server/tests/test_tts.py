@@ -89,6 +89,35 @@ def test_non_mp3_format_is_400():
     assert response.status_code == 400
 
 
+def test_edge_engine_allows_asyncio_run_inside_synthesize():
+    """edge-tts uses asyncio.run; that must not run on uvicorn's event loop."""
+
+    class NestedLoopTts:
+        def status(self):
+            return "piper"
+
+        def breaker_state(self):
+            return "closed"
+
+        def synthesize(self, text: str, voice: str, rate: str, engine: str = "auto") -> bytes:
+            import asyncio
+
+            async def _go():
+                return b"ID3FROMLOOP"
+
+            return asyncio.run(_go())
+
+    app = create_app(api_key="test-key", tts_engine=NestedLoopTts())
+    client = TestClient(app)
+    response = client.post(
+        "/v1/tts",
+        headers=auth(),
+        json={"text": "Xin chào", "format": "mp3", "engine": "edge"},
+    )
+    assert response.status_code == 200
+    assert response.content == b"ID3FROMLOOP"
+
+
 def test_engine_edge_skips_piper():
     client, engine = make_client()
     response = client.post(
