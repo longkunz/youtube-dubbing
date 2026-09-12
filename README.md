@@ -75,9 +75,7 @@ npm test
 npm run build
 ```
 
-### Self-hosted Backend (CPU Docker)
-
-On any Linux Docker host (GPU unused):
+### Self-hosted Backend
 
 ```bash
 cd server
@@ -85,7 +83,9 @@ cp .env.example .env   # set BACKEND_API_KEY
 docker compose up --build
 ```
 
-Point Command Center **Backend URL** at `http://<docker-host-ip>:8787`. Windows Server is a client of that host.
+Needs NVIDIA Container Toolkit on the Docker host. Local TTS uses MMS-TTS on GPU when CUDA is visible, otherwise Piper.
+
+Point Command Center **Backend URL** at `http://<docker-host-ip>:8787`.
 
 ---
 

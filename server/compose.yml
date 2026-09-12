@@ -5,10 +5,12 @@ services:
       - "8787:8787"
     env_file:
       - .env
+    gpus: all
     environment:
       MODEL_ROOT: /models
       CACHE_ROOT: /cache
       HF_HOME: /models/hf-cache
+      NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ./models:/models
       - ./cache:/cache
