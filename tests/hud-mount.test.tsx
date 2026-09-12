@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mountHud } from '@/entrypoints/content/mount';
 import { tryMount, resetActiveInstanceForTesting } from '@/entrypoints/content/index';
+import { getCoordinatorState } from '@/entrypoints/content/orchestrator-coordinator';
 import { act } from 'react';
 import { fireEvent } from '@testing-library/react';
 import type { DubbingOrchestrator } from '@/types/domain';
@@ -158,6 +159,32 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     await act(async () => {
       resetActiveInstanceForTesting();
     });
+  });
+
+  it('stops the old Dub Track when the watch id changes but ytp-right-controls is reused', async () => {
+    window.history.pushState({}, '', '/watch?v=VIDEO_AAAA');
+    let instance: ReturnType<typeof tryMount> = null;
+    await act(async () => {
+      instance = tryMount();
+    });
+    expect(instance).not.toBeNull();
+
+    const destroy = vi.fn();
+    const state = getCoordinatorState();
+    state.activeVideoId = 'VIDEO_AAAA';
+    state.orchestrator = { destroy } as any;
+
+    window.history.pushState({}, '', '/watch?v=VIDEO_BBBB');
+    let remount: ReturnType<typeof tryMount> = null;
+    await act(async () => {
+      remount = tryMount();
+    });
+
+    expect(destroy).toHaveBeenCalled();
+    expect(getCoordinatorState().orchestrator).toBeNull();
+    expect(getCoordinatorState().activeVideoId).not.toBe('VIDEO_AAAA');
+    expect(remount).not.toBeNull();
+    expect(playerContainer.querySelector('[data-aetherdub-host]')).not.toBeNull();
   });
 
   it('integrates Cyber Cockpit interactions and SubtitleOverlay with DubbingOrchestrator in Shadow DOM', async () => {
