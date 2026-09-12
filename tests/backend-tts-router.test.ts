@@ -34,6 +34,21 @@ describe('createBackendTtsRouter', () => {
     expect(result.audioBase64).toBeTruthy();
     expect(String(fetchFn.mock.calls[0][0])).toBe('http://127.0.0.1:8787/v1/tts');
     expect(fetchFn.mock.calls[0][1].headers.Authorization).toBe('Bearer k');
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('piper');
+  });
+
+  it('sends engine edge when ttsProvider is edge', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(mp3Response());
+    const router = createBackendTtsRouter({
+      fetchFn,
+      getSettings: async () => ({
+        backendUrl: 'http://127.0.0.1:8787',
+        backendApiKey: 'k',
+        ttsProvider: 'edge',
+      }),
+    });
+    await router.synthesize('Xin chào', DEFAULT_HOAI_MY_VOICE);
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('edge');
   });
 
   it('does not call the backend or trip the breaker for empty text', async () => {

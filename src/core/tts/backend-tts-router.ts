@@ -111,6 +111,7 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
             voice: voice.voiceKey ?? voice.id,
             rate: voice.rate ?? '+0%',
             format: 'mp3',
+            engine: settings.ttsProvider === 'edge' ? 'edge' : 'piper',
           }),
           signal: controller.signal,
         });

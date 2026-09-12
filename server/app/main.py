@@ -91,6 +91,7 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
                 text,
                 str(payload.get("voice") or "vi-VN-HoaiMyNeural"),
                 str(payload.get("rate") or "+0%"),
+                str(payload.get("engine") or "auto"),
             )
         except Exception:
             raise HTTPException(status_code=502, detail="tts synthesis failed")

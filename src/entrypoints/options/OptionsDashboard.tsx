@@ -97,7 +97,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [groqApiKey, setGroqApiKey] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('backend');
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('piper');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
   const [enableFallback, setEnableFallback] = useState(true);
@@ -141,7 +141,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
       setOpenaiApiKey(saved.openaiApiKey || '');
       setGroqApiKey(saved.groqApiKey || '');
-      setTtsProvider(saved.ttsProvider || 'backend');
+      setTtsProvider(saved.ttsProvider || 'piper');
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
       setEnableFallback(saved.enableFallback ?? true);
@@ -724,8 +724,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   }
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#ff007a] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#ff007a] transition-all"
                 >
-                  <option value="backend">Self-hosted Backend TTS (Default)</option>
-                  <option value="web-speech">Web Speech API (Local Fallback, Degraded)</option>
+                  <option value="piper">Local TTS (Piper on Docker host)</option>
+                  <option value="edge">Edge Neural TTS (on Docker host)</option>
+                  <option value="web-speech">Web Speech API (in Chrome, degraded)</option>
                 </select>
               </div>
 

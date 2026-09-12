@@ -45,26 +45,32 @@ class TtsEngine:
     def breaker_state(self) -> str:
         return "open" if self._breaker_open else "closed"
 
-    def synthesize(self, text: str, voice: str, rate: str) -> bytes:
-        cache_key = f"{text}|{voice}|{rate}|mp3"
+    def synthesize(self, text: str, voice: str, rate: str, engine: str = "auto") -> bytes:
+        mode = (engine or "auto").lower()
+        if mode not in ("piper", "edge", "auto"):
+            mode = "auto"
+        cache_key = f"{text}|{voice}|{rate}|{mode}|mp3"
         hit = self._cache.get_bytes(cache_key)
         if hit is not None:
-            log.info("tts cache hit chars=%s", len(text))
+            log.info("tts cache hit chars=%s engine=%s", len(text), mode)
             return hit
 
-        try:
-            wav = self._piper(text, voice, rate)
-            if not wav:
-                raise RuntimeError("empty piper audio")
-            mp3 = self._to_mp3(wav)
-            self._cache.set_bytes(cache_key, mp3)
-            log.info("tts engine=piper chars=%s", len(text))
-            return mp3
-        except Exception:
-            log.info("tts piper failed chars=%s", len(text))
+        if mode != "edge":
+            try:
+                wav = self._piper(text, voice, rate)
+                if not wav:
+                    raise RuntimeError("empty piper audio")
+                mp3 = self._to_mp3(wav)
+                self._cache.set_bytes(cache_key, mp3)
+                log.info("tts engine=piper chars=%s", len(text))
+                return mp3
+            except Exception:
+                log.info("tts piper failed chars=%s", len(text))
+                if mode == "piper":
+                    raise
 
         if self._breaker_open:
-            raise RuntimeError("tts unavailable: piper failed and edge breaker open")
+            raise RuntimeError("tts unavailable: edge breaker open")
 
         try:
             audio = self._edge(text, edge_voice_for(voice), rate)

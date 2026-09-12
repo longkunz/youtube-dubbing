@@ -21,7 +21,14 @@ class FakeTts:
     def breaker_state(self):
         return "open" if self._breaker_open else "closed"
 
-    def synthesize(self, text: str, voice: str, rate: str) -> bytes:
+    def synthesize(self, text: str, voice: str, rate: str, engine: str = "auto") -> bytes:
+        self.last_engine = engine
+        if engine == "edge":
+            self.edge_calls.append(voice)
+            return b"ID3FAKEEDGE"
+        if engine == "piper" and self.fail_piper:
+            self.piper_calls.append(text)
+            raise RuntimeError("piper failed")
         if self.fail_piper:
             self.piper_calls.append(text)
             if self._breaker_open:
@@ -80,6 +87,32 @@ def test_non_mp3_format_is_400():
     client, _ = make_client()
     response = client.post("/v1/tts", headers=auth(), json={"text": "Hi", "format": "wav"})
     assert response.status_code == 400
+
+
+def test_engine_edge_skips_piper():
+    client, engine = make_client()
+    response = client.post(
+        "/v1/tts",
+        headers=auth(),
+        json={"text": "Xin chào", "voice": "vi-VN-NamMinhNeural", "format": "mp3", "engine": "edge"},
+    )
+    assert response.status_code == 200
+    assert response.content == b"ID3FAKEEDGE"
+    assert engine.piper_calls == []
+    assert engine.edge_calls == ["vi-VN-NamMinhNeural"]
+
+
+def test_engine_piper_does_not_fall_back_to_edge():
+    tts = FakeTts()
+    tts.fail_piper = True
+    client, engine = make_client(tts)
+    response = client.post(
+        "/v1/tts",
+        headers=auth(),
+        json={"text": "Xin chào", "format": "mp3", "engine": "piper"},
+    )
+    assert response.status_code == 502
+    assert engine.edge_calls == []
 
 
 def test_piper_failure_uses_edge_and_namminh_voice():

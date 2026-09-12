@@ -24,7 +24,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings).toEqual(DEFAULT_USER_SETTINGS);
     expect(settings.geminiApiKey).toBe('');
     expect(settings.groqApiKey).toBe('');
-    expect(settings.ttsProvider).toBe('backend');
+    expect(settings.ttsProvider).toBe('piper');
     expect(settings.enableFallback).toBe(true);
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
@@ -38,7 +38,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     const settings = await getSettings();
     expect(settings.geminiApiKey).toBe('test-gemini-key-123');
     expect(settings.groqApiKey).toBe('test-groq-key-456');
-    expect(settings.ttsProvider).toBe('backend'); // remains default
+    expect(settings.ttsProvider).toBe('piper'); // remains default
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
 
@@ -51,7 +51,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
   it('defaults new installs to self-hosted backend TTS', async () => {
     const settings = await getSettings();
     expect(settings.translationProvider).toBe('self-hosted');
-    expect(settings.ttsProvider).toBe('backend');
+    expect(settings.ttsProvider).toBe('piper');
     expect(settings.backendUrl).toBe('http://127.0.0.1:8787');
     expect(settings.backendApiKey).toBe('');
   });
@@ -63,10 +63,16 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings.geminiApiKey).toBe('abc');
   });
 
-  it('migrates stored edge-tts provider to backend', async () => {
+  it('migrates stored edge-tts provider to edge', async () => {
     await saveSettings({ ttsProvider: 'edge-tts' as any });
     const settings = await getSettings();
-    expect(settings.ttsProvider).toBe('backend');
+    expect(settings.ttsProvider).toBe('edge');
+  });
+
+  it('migrates stored backend tts provider to piper', async () => {
+    await saveSettings({ ttsProvider: 'backend' as any });
+    const settings = await getSettings();
+    expect(settings.ttsProvider).toBe('piper');
   });
 
   it('pings health then one-cue translate', async () => {
@@ -276,7 +282,14 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 
     const providerSelect = screen.getByRole('combobox', { name: /tts provider|select tts engine provider/i });
-    expect(providerSelect).toHaveValue('backend');
+    expect(providerSelect).toHaveValue('piper');
+
+    fireEvent.change(providerSelect, { target: { value: 'edge' } });
+    expect(providerSelect).toHaveValue('edge');
+    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
+    await waitFor(async () => {
+      expect((await getSettings()).ttsProvider).toBe('edge');
+    });
 
     fireEvent.change(providerSelect, { target: { value: 'web-speech' } });
     expect(providerSelect).toHaveValue('web-speech');

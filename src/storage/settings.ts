@@ -32,7 +32,7 @@ export type TranslationProvider =
 
 export const YOUTUBE_CAPTION_TRANSLATION = 'youtube-caption-translation' as const;
 
-export type TtsProvider = 'backend' | 'web-speech';
+export type TtsProvider = 'piper' | 'edge' | 'web-speech';
 
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<any>;
 
@@ -65,7 +65,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   targetLanguage: 'vi',
   ttsPitch: '+0Hz',
   ttsRate: '+0%',
-  ttsProvider: 'backend',
+  ttsProvider: 'piper',
   enableFallback: true,
   backendUrl: 'http://127.0.0.1:8787',
   backendApiKey: '',
@@ -73,8 +73,11 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
 
 export function normalizeSettings(input: Partial<UserSettings> | undefined): UserSettings {
   const merged: UserSettings = { ...DEFAULT_USER_SETTINGS, ...(input ?? {}) };
-  if ((input as { ttsProvider?: string } | undefined)?.ttsProvider === 'edge-tts') {
-    merged.ttsProvider = 'backend';
+  const rawTts = (input as { ttsProvider?: string } | undefined)?.ttsProvider;
+  if (rawTts === 'edge-tts') {
+    merged.ttsProvider = 'edge';
+  } else if (rawTts === 'backend') {
+    merged.ttsProvider = 'piper';
   }
   return merged;
 }
