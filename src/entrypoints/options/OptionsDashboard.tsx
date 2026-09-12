@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   getSettings,
   saveSettings,
+  pingBackendConnection,
   pingGeminiConnection,
   pingOpenAiConnection,
   DEFAULT_USER_SETTINGS,
@@ -9,6 +10,7 @@ import {
   GEMINI_MODEL_PRESETS,
   type UserSettings,
   type PingOpenAiResult,
+  type PingBackendResult,
   type TranslationProvider,
   type TtsProvider,
 } from '../../storage/settings';
@@ -52,6 +54,10 @@ export interface OptionsDashboardProps {
     model: string,
     apiKey?: string
   ) => Promise<PingOpenAiResult>;
+  pingBackendFn?: (
+    url: string,
+    apiKey: string
+  ) => Promise<PingBackendResult>;
   /** Injectable Edge-TTS client for the voice preview (defaults to background proxy). */
   ttsPreviewClient?: {
     synthesize(
@@ -69,10 +75,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   segmentCache,
   pingFn,
   pingOpenAiFn,
+  pingBackendFn,
   ttsPreviewClient,
   createPreviewAudio,
 }) => {
-  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('gemini');
+  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('self-hosted');
+  const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8787');
+  const [backendApiKey, setBackendApiKey] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [geminiModel, setGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
   const [geminiModelIsCustom, setGeminiModelIsCustom] = useState(false);
@@ -80,12 +89,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [groqApiKey, setGroqApiKey] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<TtsProvider | 'edge-tts'>('edge-tts');
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('backend');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
   const [enableFallback, setEnableFallback] = useState(true);
 
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showBackendKey, setShowBackendKey] = useState(false);
   const [showOpenAiKey, setShowOpenAiKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
 
@@ -112,7 +122,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
     getSettings().then((saved) => {
       if (!active) return;
-      setTranslationProvider(saved.translationProvider || 'gemini');
+      setTranslationProvider(saved.translationProvider || 'self-hosted');
+      setBackendUrl(saved.backendUrl || 'http://127.0.0.1:8787');
+      setBackendApiKey(saved.backendApiKey || '');
       setGeminiApiKey(saved.geminiApiKey || '');
       const loadedModel = saved.geminiModel || DEFAULT_GEMINI_MODEL;
       setGeminiModel(loadedModel);
@@ -121,7 +133,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
       setOpenaiApiKey(saved.openaiApiKey || '');
       setGroqApiKey(saved.groqApiKey || '');
-      setTtsProvider((saved.ttsProvider as TtsProvider | 'edge-tts') || 'edge-tts');
+      setTtsProvider(saved.ttsProvider || 'backend');
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
       setEnableFallback(saved.enableFallback ?? true);
@@ -151,13 +163,15 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const handleSaveCredentials = async () => {
     await saveSettings({
       translationProvider,
+      backendUrl,
+      backendApiKey: backendApiKey.trim(),
       geminiApiKey: geminiApiKey.trim(),
       geminiModel: geminiModel.trim() || DEFAULT_GEMINI_MODEL,
       openaiEndpoint,
       openaiModel,
       openaiApiKey,
       groqApiKey: groqApiKey.trim(),
-      ttsProvider: ttsProvider === 'edge-tts' ? 'backend' : ttsProvider,
+      ttsProvider,
       ttsPitch,
       ttsRate,
       enableFallback,
@@ -171,7 +185,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const handlePing = async () => {
     setPingStatus({ loading: true });
     try {
-      if (translationProvider === 'openai-compatible') {
+      if (translationProvider === 'self-hosted') {
+        const pingBackend = pingBackendFn ?? pingBackendConnection;
+        const res = await pingBackend(backendUrl, backendApiKey);
+        setPingStatus({ loading: false, result: res });
+      } else if (translationProvider === 'openai-compatible') {
         const pingExecutor = pingOpenAiFn ?? pingOpenAiConnection;
         const res = await pingExecutor(openaiEndpoint, openaiModel, openaiApiKey);
         setPingStatus({ loading: false, result: res });
@@ -345,13 +363,75 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   }
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
                 >
+                  <option value="self-hosted">Self-hosted Backend (EN→VI)</option>
                   <option value="openai-compatible">OpenAI-Compatible Proxy (/v1/chat/completions)</option>
                   <option value="gemini">Google Gemini (Direct REST)</option>
                   <option value="youtube-caption-translation">YouTube Caption Translation</option>
                 </select>
               </div>
 
-              {translationProvider === 'youtube-caption-translation' ? (
+              {translationProvider === 'self-hosted' ? (
+                <>
+                  {/* Self-hosted Backend URL */}
+                  <div>
+                    <label
+                      htmlFor="backend-url"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      Backend URL
+                    </label>
+                    <input
+                      id="backend-url"
+                      aria-label="Backend URL"
+                      data-testid="backend-url-input"
+                      type="text"
+                      value={backendUrl}
+                      onChange={(e) => setBackendUrl(e.target.value)}
+                      placeholder="http://127.0.0.1:8787"
+                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                    />
+                  </div>
+
+                  {/* Self-hosted Backend API Key */}
+                  <div>
+                    <label
+                      htmlFor="backend-key"
+                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                    >
+                      Backend API Key
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        id="backend-key"
+                        aria-label="Backend API Key"
+                        data-testid="backend-key-input"
+                        type={showBackendKey ? 'text' : 'password'}
+                        value={backendApiKey}
+                        onChange={(e) => setBackendApiKey(e.target.value)}
+                        placeholder="BACKEND_API_KEY from the Docker host .env"
+                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Toggle Backend API Key visibility"
+                        onClick={() => setShowBackendKey((prev) => !prev)}
+                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+                      >
+                        {showBackendKey ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs font-mono text-gray-400 leading-relaxed">
+                    Operator-run Docker service for EN→VI translation and MP3 speech.
+                    No Gemini API key required. Use Test Connection to verify health and key.
+                  </p>
+                </>
+              ) : translationProvider === 'youtube-caption-translation' ? (
                 <p className="text-xs font-mono text-gray-400 leading-relaxed">
                   Uses a target-language YouTube Caption Track when available, otherwise YouTube
                   machine translation of a translatable source track. No Gemini API key required.
@@ -624,12 +704,12 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   aria-label="Select TTS Engine Provider"
                   value={ttsProvider}
                   onChange={(e) =>
-                    setTtsProvider(e.target.value as 'edge-tts' | 'web-speech')
+                    setTtsProvider(e.target.value as TtsProvider)
                   }
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#ff007a] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#ff007a] transition-all"
                 >
-                  <option value="edge-tts">Edge Neural TTS (Zero-Config Default)</option>
-                  <option value="web-speech">Web Speech API (Local Fallback)</option>
+                  <option value="backend">Self-hosted Backend TTS (Default)</option>
+                  <option value="web-speech">Web Speech API (Local Fallback, Degraded)</option>
                 </select>
               </div>
 

@@ -153,7 +153,7 @@ describe('activateDubbing — Cache Hit Fast Path', () => {
       'ja',
     );
 
-    expect(getTranscript).toHaveBeenCalledWith('vid1', 'ja', 'gemini');
+    expect(getTranscript).toHaveBeenCalledWith('vid1', 'ja', 'self-hosted');
     expect(mockPipeline).not.toHaveBeenCalled();
     expect(result).toBe('cache-hit');
   });
