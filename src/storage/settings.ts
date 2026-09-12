@@ -24,9 +24,17 @@ export const GEMINI_FALLBACK_MODELS = [
   'gemini-flash-latest',
 ] as const;
 
-export type TranslationProvider = 'gemini' | 'openai-compatible' | 'youtube-caption-translation';
+export type TranslationProvider =
+  | 'self-hosted'
+  | 'gemini'
+  | 'openai-compatible'
+  | 'youtube-caption-translation';
 
 export const YOUTUBE_CAPTION_TRANSLATION = 'youtube-caption-translation' as const;
+
+export type TtsProvider = 'backend' | 'web-speech';
+
+export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<any>;
 
 export interface UserSettings {
   translationProvider: TranslationProvider;
@@ -40,12 +48,14 @@ export interface UserSettings {
   targetLanguage: string;
   ttsPitch?: string;
   ttsRate?: string;
-  ttsProvider: 'edge-tts' | 'web-speech';
+  ttsProvider: TtsProvider;
   enableFallback: boolean;
+  backendUrl: string;
+  backendApiKey: string;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
-  translationProvider: 'gemini',
+  translationProvider: 'self-hosted',
   geminiApiKey: '',
   geminiModel: DEFAULT_GEMINI_MODEL,
   openaiEndpoint: 'https://api.openai.com/v1',
@@ -55,9 +65,19 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   targetLanguage: 'vi',
   ttsPitch: '+0Hz',
   ttsRate: '+0%',
-  ttsProvider: 'edge-tts',
+  ttsProvider: 'backend',
   enableFallback: true,
+  backendUrl: 'http://127.0.0.1:8787',
+  backendApiKey: '',
 };
+
+export function normalizeSettings(input: Partial<UserSettings> | undefined): UserSettings {
+  const merged: UserSettings = { ...DEFAULT_USER_SETTINGS, ...(input ?? {}) };
+  if ((input as { ttsProvider?: string } | undefined)?.ttsProvider === 'edge-tts') {
+    merged.ttsProvider = 'backend';
+  }
+  return merged;
+}
 
 let inMemorySettings: UserSettings = { ...DEFAULT_USER_SETTINGS };
 
@@ -71,16 +91,16 @@ export async function getSettings(): Promise<UserSettings> {
       chrome.storage.local.get('userSettings', (items: Record<string, unknown>) => {
         const stored = items?.userSettings as Partial<UserSettings> | undefined;
         if (chrome.runtime?.lastError || !stored) {
-          resolve({ ...DEFAULT_USER_SETTINGS, ...(stored ?? {}) });
+          resolve(normalizeSettings(stored ?? undefined));
         } else {
-          resolve({ ...DEFAULT_USER_SETTINGS, ...stored });
+          resolve(normalizeSettings(stored));
         }
       });
 
     });
   }
 
-  return { ...inMemorySettings };
+  return normalizeSettings(inMemorySettings);
 }
 
 /**
@@ -89,10 +109,10 @@ export async function getSettings(): Promise<UserSettings> {
  */
 export async function saveSettings(settings: Partial<UserSettings>): Promise<void> {
   const current = await getSettings();
-  const updated: UserSettings = {
+  const updated: UserSettings = normalizeSettings({
     ...current,
     ...settings,
-  };
+  });
 
   inMemorySettings = { ...updated };
 
@@ -192,6 +212,47 @@ export async function pingGeminiConnection(
       latencyMs,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+export interface PingBackendResult {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+  tts?: string;
+}
+
+/**
+ * Ping the Self-hosted Backend: GET /v1/health then a one-cue
+ * POST /v1/translate to verify the Bearer key is accepted.
+ */
+export async function pingBackendConnection(
+  url: string,
+  apiKey: string,
+  fetchFn: FetchFn = defaultFetch,
+): Promise<PingBackendResult> {
+  const base = url.replace(/\/+$/, '');
+  const started = Date.now();
+  try {
+    const healthRes = await fetchFn(`${base}/v1/health`);
+    if (!healthRes.ok) {
+      return { ok: false, error: `health HTTP ${healthRes.status}` };
+    }
+    const health = await healthRes.json();
+    const translateRes = await fetchFn(`${base}/v1/translate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ source: 'en', target: 'vi', cues: [{ id: 'ping', text: 'ok' }] }),
+    });
+    if (!translateRes.ok) {
+      return { ok: false, latencyMs: Date.now() - started, error: `translate HTTP ${translateRes.status}`, tts: health.tts };
+    }
+    return { ok: true, latencyMs: Date.now() - started, tts: health.tts };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

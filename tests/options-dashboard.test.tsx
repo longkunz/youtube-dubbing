@@ -7,6 +7,7 @@ import { OptionsDashboard } from '@/entrypoints/options/OptionsDashboard';
 import {
   getSettings,
   saveSettings,
+  pingBackendConnection,
   pingGeminiConnection,
   DEFAULT_USER_SETTINGS,
   resetSettingsForTesting,
@@ -23,7 +24,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     expect(settings).toEqual(DEFAULT_USER_SETTINGS);
     expect(settings.geminiApiKey).toBe('');
     expect(settings.groqApiKey).toBe('');
-    expect(settings.ttsProvider).toBe('edge-tts');
+    expect(settings.ttsProvider).toBe('backend');
     expect(settings.enableFallback).toBe(true);
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
@@ -37,7 +38,7 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     const settings = await getSettings();
     expect(settings.geminiApiKey).toBe('test-gemini-key-123');
     expect(settings.groqApiKey).toBe('test-groq-key-456');
-    expect(settings.ttsProvider).toBe('edge-tts'); // remains default
+    expect(settings.ttsProvider).toBe('backend'); // remains default
     expect(settings.geminiModel).toBe('gemini-3.8-flash');
   });
 
@@ -45,6 +46,45 @@ describe('Settings Storage & Ping Connection (Issue #8)', () => {
     await saveSettings({ geminiModel: 'gemini-1.5-flash' });
     const settings = await getSettings();
     expect(settings.geminiModel).toBe('gemini-1.5-flash');
+  });
+
+  it('defaults new installs to self-hosted backend TTS', async () => {
+    const settings = await getSettings();
+    expect(settings.translationProvider).toBe('self-hosted');
+    expect(settings.ttsProvider).toBe('backend');
+    expect(settings.backendUrl).toBe('http://127.0.0.1:8787');
+    expect(settings.backendApiKey).toBe('');
+  });
+
+  it('does not rewrite a stored gemini translation provider', async () => {
+    await saveSettings({ translationProvider: 'gemini', geminiApiKey: 'abc' });
+    const settings = await getSettings();
+    expect(settings.translationProvider).toBe('gemini');
+    expect(settings.geminiApiKey).toBe('abc');
+  });
+
+  it('migrates stored edge-tts provider to backend', async () => {
+    await saveSettings({ ttsProvider: 'edge-tts' as any });
+    const settings = await getSettings();
+    expect(settings.ttsProvider).toBe('backend');
+  });
+
+  it('pings health then one-cue translate', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, tts: 'piper', breaker: 'closed' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [{ id: 'ping', text: 'ok' }] }),
+      });
+    const result = await pingBackendConnection('http://127.0.0.1:8787', 'k', fetchFn);
+    expect(result.ok).toBe(true);
+    expect(result.tts).toBe('piper');
+    expect(String(fetchFn.mock.calls[0][0])).toContain('/v1/health');
+    expect(String(fetchFn.mock.calls[1][0])).toContain('/v1/translate');
+    expect(fetchFn.mock.calls[1][1].headers.Authorization).toBe('Bearer k');
   });
 
   describe('pingGeminiConnection', () => {

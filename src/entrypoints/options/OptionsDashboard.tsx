@@ -10,6 +10,7 @@ import {
   type UserSettings,
   type PingOpenAiResult,
   type TranslationProvider,
+  type TtsProvider,
 } from '../../storage/settings';
 import { defaultFetch } from '../../core/default-fetch';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
@@ -79,7 +80,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [groqApiKey, setGroqApiKey] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<'edge-tts' | 'web-speech'>('edge-tts');
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider | 'edge-tts'>('edge-tts');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
   const [enableFallback, setEnableFallback] = useState(true);
@@ -120,7 +121,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
       setOpenaiApiKey(saved.openaiApiKey || '');
       setGroqApiKey(saved.groqApiKey || '');
-      setTtsProvider(saved.ttsProvider || 'edge-tts');
+      setTtsProvider((saved.ttsProvider as TtsProvider | 'edge-tts') || 'edge-tts');
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
       setEnableFallback(saved.enableFallback ?? true);
@@ -156,7 +157,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       openaiModel,
       openaiApiKey,
       groqApiKey: groqApiKey.trim(),
-      ttsProvider,
+      ttsProvider: ttsProvider === 'edge-tts' ? 'backend' : ttsProvider,
       ttsPitch,
       ttsRate,
       enableFallback,
