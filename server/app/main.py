@@ -83,7 +83,8 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         if fmt != "mp3":
             log.warning("tts reject format=%s chars=%s", fmt, len(text))
             raise HTTPException(status_code=400, detail="format must be mp3")
-        log.info("tts chars=%s", len(text))
+        engine = str(payload.get("engine") or "auto")
+        log.info("tts chars=%s engine=%s", len(text), engine)
         if app.state.tts_engine is None:
             raise HTTPException(status_code=503, detail="tts unavailable")
         try:
@@ -91,7 +92,7 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
                 text,
                 str(payload.get("voice") or "vi-VN-HoaiMyNeural"),
                 str(payload.get("rate") or "+0%"),
-                str(payload.get("engine") or "auto"),
+                engine,
             )
         except Exception:
             raise HTTPException(status_code=502, detail="tts synthesis failed")

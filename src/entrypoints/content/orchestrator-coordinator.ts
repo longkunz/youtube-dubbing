@@ -11,6 +11,7 @@
  */
 
 import { isPotTokenError, TranscriptFetcher } from '@/core/transcript/fetcher';
+import { translatedLookaheadReady } from '@/core/transcript/lookahead';
 import { isYoutubeTranslationOnlyFailure } from '@/core/transcript/youtube-caption-translation';
 import { DubbingOrchestratorImpl } from '@/core/orchestrator/dubbing-orchestrator';
 import { BackgroundDubbingTtsClient } from '@/core/tts/background-tts-client';
@@ -436,6 +437,7 @@ export async function getPlayerResponse(videoId: string): Promise<any> {
 
 export const TRANSLATE_BATCH_SIZE = 8;
 export const TRANSLATE_BATCH_TIMEOUT_MS = 90000;
+export const TRANSLATE_LOOKAHEAD_SECONDS = 60;
 
 export interface TranslateViaBackgroundOptions {
   /** Segments per background message (default 8). Smaller = faster first Dub Track. */
@@ -886,7 +888,7 @@ export async function startDubbingPipeline(
         await orchestrator.init(videoId, partial, {
           targetLanguage,
           duckLevel: 0.2,
-          lookaheadSeconds: 60,
+          lookaheadSeconds: TRANSLATE_LOOKAHEAD_SECONDS,
           diarizationEnabled: false,
         });
         if (orchestrator.primeInitialLookahead) {
@@ -949,6 +951,12 @@ export async function startDubbingPipeline(
             targetLanguage,
             segments: soFar,
           };
+          if (
+            !playbackReleased &&
+            !translatedLookaheadReady(soFar, video.currentTime, TRANSLATE_LOOKAHEAD_SECONDS)
+          ) {
+            return;
+          }
           await releasePlayback(partial);
           settleFirstOnce(orchestrator);
         },

@@ -278,6 +278,15 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     expect(await screen.findByText(/ERROR: Invalid API Key/i)).toBeInTheDocument();
   });
 
+  it('persists Edge Neural TTS as soon as the engine dropdown changes', async () => {
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+    const providerSelect = screen.getByRole('combobox', { name: /tts provider|select tts engine provider/i });
+    fireEvent.change(providerSelect, { target: { value: 'edge' } });
+    await waitFor(async () => {
+      expect((await getSettings()).ttsProvider).toBe('edge');
+    });
+  });
+
   it('allows selecting TTS engine provider and calibrating pitch and rate', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 

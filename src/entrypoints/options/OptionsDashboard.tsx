@@ -719,12 +719,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   id="tts-provider-select"
                   aria-label="Select TTS Engine Provider"
                   value={ttsProvider}
-                  onChange={(e) =>
-                    setTtsProvider(e.target.value as TtsProvider)
-                  }
+                  onChange={(e) => {
+                    const next = e.target.value as TtsProvider;
+                    setTtsProvider(next);
+                    void saveSettings({ ttsProvider: next });
+                  }}
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#ff007a] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#ff007a] transition-all"
                 >
-                  <option value="piper">Local TTS (Piper on Docker host)</option>
+                  <option value="piper">Local TTS (MMS-TTS GPU, Piper CPU fallback)</option>
                   <option value="edge">Edge Neural TTS (on Docker host)</option>
                   <option value="web-speech">Web Speech API (in Chrome, degraded)</option>
                 </select>
