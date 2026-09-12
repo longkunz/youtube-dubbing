@@ -8,6 +8,8 @@
  */
 
 export type { TranslationClient, TranslateOptions, FetchFn } from './types';
+export { BackendTranslationClient } from './backend-client';
+export type { BackendTranslationClientOptions } from './backend-client';
 export { GeminiTranslationClient } from './gemini-client';
 export type { GeminiTranslationClientOptions } from './gemini-client';
 export { OpenAiCompatibleTranslationClient, normalizeEndpoint, parseSseStream } from './openai-client';
