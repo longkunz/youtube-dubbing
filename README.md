@@ -6,19 +6,20 @@
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](https://developer.chrome.com/docs/extensions/develop)
 [![Framework: WXT](https://img.shields.io/badge/Framework-WXT-purple.svg)](https://wxt.dev/)
 
-YouTube Dubbing is a 100% client-side Chrome/Web extension that translates and dubs YouTube videos into natural, fluent Vietnamese (and other target languages) in real time. It pairs a high-octane **Hyper Sci-Fi Cockpit HUD** for audio controls with clean, unobtrusive **YouTube-native subtitles** for zero eye fatigue.
+YouTube Dubbing is a Chrome/Web extension that translates and dubs YouTube videos into natural, fluent Vietnamese (and other target languages) in real time. New installs default to an operator-run **Self-hosted Backend** (EN→VI + Piper/Edge TTS). Gemini BYOK and YouTube Caption Translation remain optional. It pairs a high-octane **Hyper Sci-Fi Cockpit HUD** for audio controls with clean, unobtrusive **YouTube-native subtitles** for zero eye fatigue.
 
 ---
 
 ## ⚡ Key Capabilities
 
-- **100% Client-Side & BYOK (Bring Your Own Key)**: Zero server costs, zero telemetry tracking, and total user privacy. Enter your Google Gemini API key once in the Command Center.
+- **Self-hosted Backend (default)**: CPU Docker Compose for EN→VI translation and MP3 TTS. Chrome does not open Bing WebSocket. Gemini / OpenAI-compatible / YouTube Caption Translation stay selectable.
+- **Optional BYOK**: Google Gemini, OpenAI-compatible proxies, and Groq Whisper when you want them — not required for the self-hosted path.
 - **Intelligent Sentence Restructuring**: Merges fragmented YouTube auto-captions (silence gap < 0.4s) into cohesive sentences with preserved timeline boundaries before translation.
 - **On-Demand Activation**: Toolbar HUD mounts dormant (`DUB: OFF`). Translation and TTS start only when you toggle dubbing on (ADR-0008).
 - **Configurable Gemini Flash + OpenAI-compatible proxies**: Default model `gemini-3.8-flash` with Command Center presets, custom IDs, 404 fallback, and optional `/v1/chat/completions` gateways.
 - **Full Upfront Translation**: Translates the full video transcript in a single batch pass when dubbing is activated, ensuring pronouns, tone, and technical terminology remain consistent.
 - **Cockpit target language**: Cache lookup and translation follow the language selected in the Cyber Cockpit (default `vi`).
-- **Sliding-Window Speech Synthesis**: Pre-synthesizes audio 30–60 seconds ahead using Microsoft Edge Neural TTS (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`) with automatic 3x WebSocket retry and fallback.
+- **Sliding-Window Speech Synthesis**: Pre-synthesizes audio 30–60 seconds ahead via `POST /v1/tts` (Piper, then Edge TTS on the server). Web Speech is an explicit degraded option, not a fake audio blob.
 - **Whisper Fallback**: If YouTube captions cannot be downloaded and a Groq API key is set, transcribe unsigned player audio via Groq Whisper. Netflix, lip-sync, and paid TTS are out of scope.
 - **Dynamic Audio Ducking & Time-Stretching**: Smoothly attenuates original video volume to ~20% in 150ms during active speech and scales TTS rate (1.0x–1.35x) to maintain perfect synchronization with speaker lip movements.
 - **Zero-CSS-Bleed Shadow DOM Mount**: In-player controls (`NEURAL DUB` trigger pill and the expandable Cyber Cockpit) are isolated within a Shadow DOM container inside `.ytp-right-controls`.
@@ -31,7 +32,8 @@ YouTube Dubbing is a 100% client-side Chrome/Web extension that translates and d
 
 The project's architectural decisions are documented as lightweight ADRs:
 
-- [ADR-0001: 100% Client-Side BYOK Architecture](docs/adr/0001-client-side-byok-architecture.md)
+- [ADR-0001: Client architecture with optional BYOK](docs/adr/0001-client-side-byok-architecture.md)
+- [ADR-0010: Self-hosted CPU backend](docs/adr/0010-self-hosted-cpu-backend.md)
 - [ADR-0002: HTMLMediaElement Volume Lerp for Audio Ducking](docs/adr/0002-volume-lerp-for-audio-ducking.md)
 - [ADR-0003: Full Transcript Pre-Translation with Sliding-Window TTS](docs/adr/0003-full-pretranslation-sliding-window-tts.md)
 - [ADR-0004: In-Player Controls via Shadow DOM Injection](docs/adr/0004-shadow-dom-in-player-controls.md)
@@ -72,6 +74,18 @@ npm test
 # Build production extension package
 npm run build
 ```
+
+### Self-hosted Backend (CPU Docker)
+
+On any Linux Docker host (GPU unused):
+
+```bash
+cd server
+cp .env.example .env   # set BACKEND_API_KEY
+docker compose up --build
+```
+
+Point Command Center **Backend URL** at `http://<docker-host-ip>:8787`. Windows Server is a client of that host.
 
 ---
 

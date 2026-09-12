@@ -12,8 +12,8 @@ updated: 2026-09-09
 
 ## Tech Stack
 - Web Extension: WXT (Manifest V3) + React + TypeScript + TailwindCSS
-- Primary AI Translation: configurable Gemini Flash (default `gemini-3.8-flash`, BYOK) plus OpenAI-compatible proxies
-- Speech Synthesis: Microsoft Edge Neural TTS (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) via Background Service Worker WebSocket
+- Primary translation default: Self-hosted Backend EN→VI; optional Gemini Flash (default `gemini-3.8-flash`, BYOK) plus OpenAI-compatible proxies and YouTube Caption Translation
+- Speech Synthesis: `POST /v1/tts` on the Self-hosted Backend (Piper, then Edge TTS on the server). Chrome must not open Bing WebSocket.
 - Persistent Cache: Browser IndexedDB (`idb` repository)
 
 ## Architecture & Seams

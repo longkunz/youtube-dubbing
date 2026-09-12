@@ -8,7 +8,7 @@ Users consuming foreign-language content on YouTube (e.g. English, Japanese, Kor
 
 ## Solution
 
-A high-performance, 100% client-side Chrome/Web extension (built with WXT, React, TypeScript, and TailwindCSS) that translates and dubs YouTube videos into natural, fluent Vietnamese and other target languages in real time. The extension uses Bring Your Own Key (BYOK) for LLM translation (configurable Gemini Flash model, default `gemini-3.8-flash`, plus OpenAI-compatible proxies) or optional **YouTube Caption Translation** (existing target-language Caption Track or YouTube machine translation of a translatable source track, no LLM key). It leverages Microsoft Edge Neural TTS for free, expressive, high-fidelity voices (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`). Dubbing stays dormant until On-Demand Activation. It provides smooth Audio Ducking to keep background audio intact, dynamic Time Stretching to fit timeline segments, a `SegmentCache` (IndexedDB via `idb`) for zero-latency replay, and an eye-catching Hyper Sci-Fi Audio HUD embedded via Shadow DOM alongside gentle, distraction-free YouTube-style captions.
+A high-performance Chrome/Web extension (built with WXT, React, TypeScript, and TailwindCSS) that translates and dubs YouTube videos into natural, fluent Vietnamese and other target languages in real time. New installs default to a **Self-hosted Backend** (CPU Docker: CTranslate2 Opus-MT EN→VI and Piper then Edge TTS on the server). Optional Bring Your Own Key (BYOK) covers LLM translation (configurable Gemini Flash, default `gemini-3.8-flash`, plus OpenAI-compatible proxies) and **YouTube Caption Translation**. Chrome does not open Bing WebSocket; Edge Neural voices run inside the Self-hosted Backend. Dubbing stays dormant until On-Demand Activation. It provides smooth Audio Ducking, dynamic Time Stretching, a `SegmentCache` (IndexedDB via `idb`), and an eye-catching Hyper Sci-Fi Audio HUD embedded via Shadow DOM alongside gentle, distraction-free YouTube-style captions.
 
 ## User Stories
 
@@ -151,10 +151,10 @@ export interface VoiceProfile {
 ## Out of Scope
 
 - Video platforms other than YouTube (e.g. Netflix, Coursera, Udemy).
-- Server-side centralized audio caching or user accounts (100% client-side BYOK).
+- Multi-tenant public SaaS, user accounts, or uploading video/audio to the Self-hosted Backend.
 - Real-time video voice cloning / custom zero-shot voice training.
 - Video frame lip-sync modification (Wav2Lip) — this is an audio dubbing extension, not video generation.
-- Paid commercial TTS providers (ElevenLabs, OpenAI TTS): Microsoft Edge Neural TTS is the built-in default; ElevenLabs / OpenAI TTS stay deferred as secondary BYOK plugins.
+- Paid commercial TTS providers (ElevenLabs, OpenAI TTS): Self-hosted Piper then server-side Edge TTS is the default; ElevenLabs / OpenAI TTS stay deferred as secondary BYOK plugins.
 - Google Cloud Translate / DeepL / scraping translate.google.com as Translation Providers.
 - Automatic fallback from YouTube Caption Translation to an LLM.
 - Solving YouTube `signatureCipher` / n-sig audio URLs for Whisper Fallback. Ciphered streams are skipped.

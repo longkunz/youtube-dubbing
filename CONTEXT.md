@@ -61,8 +61,12 @@ A specific speech synthesis configuration defined by locale, gender, pitch, rate
 _Avoid_: Speaker preset, narrator option, voice persona
 
 **Translation Provider**:
-The user-selected source of translated Segment text: an LLM backend (Google Gemini or an OpenAI-Compatible Endpoint) or YouTube Caption Translation. Chosen in Command Center; not switched automatically.
+The user-selected source of translated Segment text: Self-hosted Backend, an LLM backend (Google Gemini or an OpenAI-Compatible Endpoint), or YouTube Caption Translation. Chosen in Command Center; not switched automatically.
 _Avoid_: Translation API, LLM wrapper, model server, auto-translate toggle
+
+**Self-hosted Backend**:
+Operator-run Docker service exposing `/v1/translate` and `/v1/tts` for EN→VI cue text and MP3 speech.
+_Avoid_: the API, cloud, our server
 
 **OpenAI-Compatible Endpoint**:
 A REST API gateway conforming to the standard `/v1/chat/completions` specification, accepting customizable base URLs, model identifiers, and optional bearer tokens.

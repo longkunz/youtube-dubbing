@@ -1,6 +1,6 @@
 # Self-hosted translation & TTS backend (EN→VI, CPU Docker)
 
-Status: draft — awaiting human review  
+Status: accepted  
 Date: 2026-09-12  
 Supersedes in part: ADR-0001 (client-only BYOK as the only topology)  
 Related: ADR-0003, ADR-0007, ADR-0008, ADR-0009
