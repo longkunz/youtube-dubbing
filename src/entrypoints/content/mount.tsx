@@ -9,6 +9,7 @@ import {
   deactivateDubbing,
   type ActivationHudCallbacks,
 } from './orchestrator-coordinator';
+import { openCommandCenter } from './command-center-mount';
 
 export interface HudInstance {
   unmount: () => void;
@@ -136,6 +137,7 @@ export function mountHud(
         <HudContainer
           orchestrator={currentOrchestrator}
           {...currentProps}
+          onOpenCommandCenter={openCommandCenter}
           onActivateDubbing={handleActivateDubbing}
           onTargetLanguageChange={handleTargetLanguageChange}
           onDeactivateDubbing={handleDeactivateDubbing}

@@ -38,6 +38,8 @@ export interface HudContainerProps {
   hasCaptions?: boolean;
   isNoCaptions?: boolean;
   onConfigureSettings?: () => void;
+  onOpenCommandCenter?: () => void;
+  onOpenSettings?: () => void;
 
   /** Translation engine badge shown in the cockpit telemetry row. */
   engineLabel?: string;
@@ -89,6 +91,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   hasCaptions,
   isNoCaptions,
   onConfigureSettings,
+  onOpenCommandCenter,
+  onOpenSettings,
   engineLabel,
   onActivateDubbing,
   onTargetLanguageChange,
@@ -267,6 +271,14 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   };
 
   const handleOpenSettings = () => {
+    if (onOpenSettings) {
+      onOpenSettings();
+      return;
+    }
+    if (onOpenCommandCenter) {
+      onOpenCommandCenter();
+      return;
+    }
     if (onConfigureSettings) {
       onConfigureSettings();
       return;
