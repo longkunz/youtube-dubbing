@@ -8,6 +8,7 @@ dependencies = [
   "ctranslate2>=4.5",
   "sentencepiece>=0.2",
   "edge-tts>=6.1",
+  "piper-tts>=1.2",
 ]
 
 [project.optional-dependencies]

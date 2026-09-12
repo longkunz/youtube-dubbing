@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      MODEL_ROOT: /models
+      CACHE_ROOT: /cache
+    volumes:
+      - ./models:/models
+      - ./cache:/cache
+    restart: unless-stopped

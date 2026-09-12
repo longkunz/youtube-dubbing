@@ -63,13 +63,34 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         return {"items": items}
 
     @app.post("/v1/tts")
-    async def tts(request: Request, authorization: str | None = Header(default=None)):
+    async def tts(payload: dict, authorization: str | None = Header(default=None)):
         require_bearer(authorization, app.state.api_key)
-        raise HTTPException(status_code=501, detail="tts not implemented")
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        if len(text) > 500:
+            raise HTTPException(status_code=400, detail="text cannot exceed 500 characters")
+        fmt = str(payload.get("format") or "mp3").lower()
+        if fmt != "mp3":
+            raise HTTPException(status_code=400, detail="format must be mp3")
+        if app.state.tts_engine is None:
+            raise HTTPException(status_code=503, detail="tts unavailable")
+        try:
+            audio = app.state.tts_engine.synthesize(
+                text,
+                str(payload.get("voice") or "vi-VN-HoaiMyNeural"),
+                str(payload.get("rate") or "+0%"),
+            )
+        except Exception:
+            raise HTTPException(status_code=502, detail="tts synthesis failed")
+        return Response(content=audio, media_type="audio/mpeg")
 
     return app
 
 
 def app_from_env() -> FastAPI:
     import os
-    return create_app(api_key=os.environ.get("BACKEND_API_KEY", ""))
+    from app.runtime import build_runtime
+    api_key = os.environ.get("BACKEND_API_KEY", "")
+    translator, tts_engine = build_runtime()
+    return create_app(api_key=api_key, translator=translator, tts_engine=tts_engine)
