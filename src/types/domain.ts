@@ -141,6 +141,7 @@ export interface DubbingOrchestrator {
   setDiarizationEnabled?(enabled: boolean): void;
   isDiarizationEnabled?(): boolean;
   primeInitialLookahead?(currentTime: number): Promise<void>;
+  mergeTranslatedSegments?(segments: Segment[]): void;
   getState(): OrchestratorState;
   destroy(): void;
 }

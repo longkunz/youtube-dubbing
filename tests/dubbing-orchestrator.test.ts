@@ -348,6 +348,82 @@ describe('DubbingOrchestratorImpl', () => {
 
       orch.destroy();
     });
+
+    it('does not synthesize segments that have not been translated yet', async () => {
+      const mockClient = {
+        synthesize: vi.fn().mockResolvedValue(new Blob(['audio'], { type: 'audio/mpeg' })),
+      };
+
+      const partial: Transcript = {
+        ...BASE_TRANSCRIPT,
+        segments: [
+          makeSegment({
+            id: 's-wait',
+            startTime: 0,
+            endTime: 4,
+            sourceText: 'Hello',
+            translatedText: undefined,
+            audioBlob: undefined,
+          }),
+          makeSegment({
+            id: 's-ready',
+            startTime: 5,
+            endTime: 9,
+            sourceText: 'World',
+            translatedText: 'Thế giới',
+            audioBlob: undefined,
+          }),
+        ],
+      };
+
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: mockClient });
+      await orch.init('vid-001', partial, BASE_CONFIG);
+      orch.handleTimeUpdate(0);
+
+      await vi.waitFor(() => {
+        expect(mockClient.synthesize).toHaveBeenCalledTimes(1);
+      });
+      expect(mockClient.synthesize).toHaveBeenCalledWith('Thế giới', expect.anything());
+
+      orch.destroy();
+    });
+
+    it('synthesizes a segment after mergeTranslatedSegments fills in translatedText', async () => {
+      const mockClient = {
+        synthesize: vi.fn().mockResolvedValue(new Blob(['audio'], { type: 'audio/mpeg' })),
+      };
+
+      const partial: Transcript = {
+        ...BASE_TRANSCRIPT,
+        segments: [
+          makeSegment({
+            id: 's-late',
+            startTime: 0,
+            endTime: 4,
+            sourceText: 'Hello',
+            translatedText: undefined,
+            audioBlob: undefined,
+          }),
+        ],
+      };
+
+      const orch = new DubbingOrchestratorImpl(video, { ttsClient: mockClient });
+      await orch.init('vid-001', partial, BASE_CONFIG);
+      orch.handleTimeUpdate(0);
+      expect(mockClient.synthesize).not.toHaveBeenCalled();
+
+      orch.mergeTranslatedSegments([
+        { ...partial.segments[0], translatedText: 'Xin chào' },
+      ]);
+      orch.handleTimeUpdate(0);
+
+      await vi.waitFor(() => {
+        expect(mockClient.synthesize).toHaveBeenCalledWith('Xin chào', expect.anything());
+      });
+
+      orch.destroy();
+    });
+
   });
 
   // -------------------------------------------------------------------------

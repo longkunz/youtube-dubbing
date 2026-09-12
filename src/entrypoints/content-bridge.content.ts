@@ -70,7 +70,7 @@ export default defineContentScript({
           languageCode: t.languageCode ?? '',
           kind: t.kind === 'asr' ? 'asr' : undefined,
           name: t.name?.simpleText ?? t.displayName ?? t.languageName ?? '',
-          isTranslatable: t.isTranslatable ?? false,
+          isTranslatable: t.isTranslatable,
         })).filter((t: any) => t.url && t.languageCode);
 
         if (serialisable.length === 0) return;

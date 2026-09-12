@@ -245,6 +245,46 @@ describe('SegmentCache', () => {
 
   // --- close() ---
 
+  it('isolates transcripts by Translation Provider and reads legacy keys as Gemini', async () => {
+    const youtubeCopy: Transcript = {
+      ...TRANSCRIPT_A,
+      segments: TRANSCRIPT_A.segments.map((s) => ({
+        ...s,
+        translatedText: 'Bản YouTube',
+      })),
+    };
+
+    await cache.saveTranscript(TRANSCRIPT_A, 'gemini');
+    await cache.saveTranscript(youtubeCopy, 'youtube-caption-translation');
+
+    const gemini = await cache.getTranscript('vid-001', 'vi', 'gemini');
+    const youtube = await cache.getTranscript('vid-001', 'vi', 'youtube-caption-translation');
+
+    expect(gemini!.segments[0].translatedText).toBe('Xin chào mọi người');
+    expect(youtube!.segments[0].translatedText).toBe('Bản YouTube');
+  });
+
+  it('reads a pre-provider transcript key as Gemini and not as YouTube Caption Translation', async () => {
+    const { openDB } = await import('idb');
+    const dbName = `legacy-transcript-${Math.random()}`;
+    const legacyCache = new SegmentCache({ dbName });
+    await legacyCache.getTranscript('missing', 'vi');
+
+    const db = await openDB(dbName, 1);
+    await db.put('transcripts', {
+      key: 'vid-legacy_vi',
+      videoId: 'vid-legacy',
+      targetLanguage: 'vi',
+      transcript: { ...TRANSCRIPT_A, videoId: 'vid-legacy' },
+      byteSize: 32,
+    });
+    db.close();
+
+    expect(await legacyCache.getTranscript('vid-legacy', 'vi', 'gemini')).not.toBeNull();
+    expect(await legacyCache.getTranscript('vid-legacy', 'vi', 'youtube-caption-translation')).toBeNull();
+    legacyCache.close();
+  });
+
   it('close() does not throw', () => {
     expect(() => cache.close()).not.toThrow();
   });

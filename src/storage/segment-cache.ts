@@ -1,5 +1,8 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Transcript } from '../types/domain';
+import type { TranslationProvider } from './settings';
+
+const DEFAULT_CACHE_PROVIDER: TranslationProvider = 'gemini';
 
 // ---------------------------------------------------------------------------
 // Public Types
@@ -45,6 +48,7 @@ interface TranscriptRecord {
   key: string;
   videoId: string;
   targetLanguage: string;
+  translationProvider?: TranslationProvider;
   transcript: Transcript;
   byteSize: number;
 }
@@ -60,6 +64,7 @@ interface AudioRecord {
   language: string;
   voiceId: string;
   segmentId: string;
+  translationProvider?: TranslationProvider;
   /** Raw audio bytes — ArrayBuffer survives structured clone in all environments. */
   buffer: ArrayBuffer;
   /** MIME type of the original Blob (e.g. `'audio/mpeg'`). */
@@ -86,7 +91,7 @@ type SegmentCacheDB = {
 
 /**
  * Persistent IndexedDB storage of translated text and synthesized audio blobs
- * keyed by video, target language, and voice profile.
+ * keyed by video, target language, Translation Provider, and voice profile.
  *
  * Audio blobs are serialised to ArrayBuffers before storage so that they round-
  * trip correctly through the IndexedDB structured-clone algorithm in every
@@ -124,11 +129,29 @@ export class SegmentCache {
     return this.dbPromise;
   }
 
-  private static transcriptKey(videoId: string, targetLanguage: string): string {
+  private static transcriptKey(
+    videoId: string,
+    targetLanguage: string,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
+  ): string {
+    return `${videoId}_${targetLanguage}_${translationProvider}`;
+  }
+
+  private static legacyTranscriptKey(videoId: string, targetLanguage: string): string {
     return `${videoId}_${targetLanguage}`;
   }
 
   private static audioKey(
+    videoId: string,
+    language: string,
+    voiceId: string,
+    segmentId: string,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
+  ): string {
+    return `${videoId}_${language}_${voiceId}_${segmentId}__${translationProvider}`;
+  }
+
+  private static legacyAudioKey(
     videoId: string,
     language: string,
     voiceId: string,
@@ -150,15 +173,19 @@ export class SegmentCache {
   // Transcript API
   // -------------------------------------------------------------------------
 
-  async saveTranscript(transcript: Transcript): Promise<void> {
+  async saveTranscript(
+    transcript: Transcript,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
+  ): Promise<void> {
     const targetLanguage = transcript.targetLanguage ?? '';
-    const key = SegmentCache.transcriptKey(transcript.videoId, targetLanguage);
+    const key = SegmentCache.transcriptKey(transcript.videoId, targetLanguage, translationProvider);
     const byteSize = new TextEncoder().encode(JSON.stringify(transcript)).length;
 
     const record: TranscriptRecord = {
       key,
       videoId: transcript.videoId,
       targetLanguage,
+      translationProvider,
       transcript,
       byteSize,
     };
@@ -167,11 +194,25 @@ export class SegmentCache {
     await db.put(TRANSCRIPT_STORE, record);
   }
 
-  async getTranscript(videoId: string, targetLanguage: string): Promise<Transcript | null> {
-    const key = SegmentCache.transcriptKey(videoId, targetLanguage);
+  async getTranscript(
+    videoId: string,
+    targetLanguage: string,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
+  ): Promise<Transcript | null> {
     const db = await this.getDb();
+    const key = SegmentCache.transcriptKey(videoId, targetLanguage, translationProvider);
     const record = await db.get(TRANSCRIPT_STORE, key);
-    return record?.transcript ?? null;
+    if (record?.transcript) return record.transcript;
+
+    if (translationProvider === DEFAULT_CACHE_PROVIDER) {
+      const legacy = await db.get(
+        TRANSCRIPT_STORE,
+        SegmentCache.legacyTranscriptKey(videoId, targetLanguage),
+      );
+      return legacy?.transcript ?? null;
+    }
+
+    return null;
   }
 
   // -------------------------------------------------------------------------
@@ -184,9 +225,11 @@ export class SegmentCache {
     voiceId: string;
     segmentId: string;
     audioBlob: Blob;
+    translationProvider?: TranslationProvider;
   }): Promise<void> {
     const { videoId, language, voiceId, segmentId, audioBlob } = entry;
-    const key = SegmentCache.audioKey(videoId, language, voiceId, segmentId);
+    const translationProvider = entry.translationProvider ?? DEFAULT_CACHE_PROVIDER;
+    const key = SegmentCache.audioKey(videoId, language, voiceId, segmentId, translationProvider);
 
     // Convert Blob → ArrayBuffer so structured-clone can handle it in all envs
     const buffer = await audioBlob.arrayBuffer();
@@ -197,6 +240,7 @@ export class SegmentCache {
       language,
       voiceId,
       segmentId,
+      translationProvider,
       buffer,
       mimeType: audioBlob.type,
       byteSize: audioBlob.size,
@@ -224,18 +268,28 @@ export class SegmentCache {
     language: string,
     voiceId: string,
     segmentId: string,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
   ): Promise<Blob | null> {
-    const key = SegmentCache.audioKey(videoId, language, voiceId, segmentId);
     const db = await this.getDb();
+    const key = SegmentCache.audioKey(videoId, language, voiceId, segmentId, translationProvider);
     const record = await db.get(AUDIO_STORE, key);
-    if (!record) return null;
-    return SegmentCache.recordToBlob(record);
+    if (record) return SegmentCache.recordToBlob(record);
+
+    if (translationProvider === DEFAULT_CACHE_PROVIDER) {
+      const legacy = await db.get(
+        AUDIO_STORE,
+        SegmentCache.legacyAudioKey(videoId, language, voiceId, segmentId),
+      );
+      if (legacy) return SegmentCache.recordToBlob(legacy);
+    }
+    return null;
   }
 
   async getAudioSegmentsForVideo(
     videoId: string,
     language: string,
     voiceId: string,
+    translationProvider: TranslationProvider = DEFAULT_CACHE_PROVIDER,
   ): Promise<Map<string, Blob>> {
     const db = await this.getDb();
     const prefix = SegmentCache.audioPrefix(videoId, language, voiceId);
@@ -246,6 +300,8 @@ export class SegmentCache {
 
     const result = new Map<string, Blob>();
     for (const record of records) {
+      const recordProvider = record.translationProvider ?? DEFAULT_CACHE_PROVIDER;
+      if (recordProvider !== translationProvider) continue;
       result.set(record.segmentId, SegmentCache.recordToBlob(record));
     }
     return result;

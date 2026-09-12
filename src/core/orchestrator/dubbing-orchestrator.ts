@@ -209,6 +209,27 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     this._targetLanguage = languageCode;
   }
 
+  /**
+   * Merge later translation batches into the live transcript so TTS can
+   * start after batch 1 while the rest of the video is still translating.
+   */
+  mergeTranslatedSegments(incoming: Segment[]): void {
+    if (!this.transcript || this.status === 'destroyed') return;
+    const byId = new Map(incoming.map((segment) => [segment.id, segment]));
+    this.transcript = {
+      ...this.transcript,
+      segments: this.transcript.segments.map((segment) => {
+        const hit = byId.get(segment.id);
+        if (!hit?.translatedText) return segment;
+        return {
+          ...segment,
+          translatedText: hit.translatedText,
+          speakerGender: hit.speakerGender ?? segment.speakerGender,
+        };
+      }),
+    };
+  }
+
   setVoiceProfile(profile: VoiceProfile | string): void {
     this._voiceProfile = profile;
   }
@@ -273,7 +294,8 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   }
 
   async synthesizeSegment(segment: Segment): Promise<Blob | undefined> {
-    const rawText = segment.translatedText ?? segment.sourceText;
+    if (!segment.translatedText) return undefined;
+    const rawText = segment.translatedText;
     const text = cleanSpeechText(rawText);
 
     if (!isSpeakableText(text)) {
@@ -407,7 +429,11 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       return;
     }
 
-    const rawText = seg.translatedText ?? seg.sourceText;
+    if (!seg.translatedText) {
+      return;
+    }
+
+    const rawText = seg.translatedText;
     const text = cleanSpeechText(rawText);
 
     if (!isSpeakableText(text)) {

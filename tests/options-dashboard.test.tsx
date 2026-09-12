@@ -373,6 +373,31 @@ describe('OptionsDashboard UI (AETHERDUB // COMMAND CENTER)', () => {
     expect(await screen.findByText(/ONLINE \(42ms\)/i)).toBeInTheDocument();
   });
 
+  it('persists YouTube Caption Translation without requiring a Gemini key or Ping', async () => {
+    await saveSettings({ geminiApiKey: 'AIzaSyKeepMe' });
+    render(<OptionsDashboard segmentCache={segmentCache} />);
+
+    const keyInput = await screen.findByTestId('gemini-key-input');
+    await waitFor(() => {
+      expect(keyInput).toHaveValue('AIzaSyKeepMe');
+    });
+
+    fireEvent.change(screen.getByRole('combobox', { name: /translation provider/i }), {
+      target: { value: 'youtube-caption-translation' },
+    });
+
+    expect(screen.queryByTestId('gemini-key-input')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ping connection|test connection/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
+
+    await waitFor(async () => {
+      const saved = await getSettings();
+      expect(saved.translationProvider).toBe('youtube-caption-translation');
+      expect(saved.geminiApiKey).toBe('AIzaSyKeepMe');
+    });
+  });
+
   it('saves OpenAI proxy settings to storage', async () => {
     render(<OptionsDashboard segmentCache={segmentCache} />);
 

@@ -33,6 +33,12 @@ declare namespace chrome {
         ) => boolean | void
       ): void;
     };
+    const onConnect: {
+      addListener(callback: (port: { name?: string }) => void): void;
+    };
+    function connect(info?: { name?: string }): {
+      onDisconnect?: { addListener: (fn: () => void) => void };
+    };
   }
 
   namespace action {

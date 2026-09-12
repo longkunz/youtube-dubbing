@@ -1,4 +1,5 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
+import { getExtensionRuntime } from '@/core/extension-runtime';
 import { mountHud, HudInstance } from './mount';
 import { stopDubbingPipeline } from './orchestrator-coordinator';
 
@@ -48,10 +49,25 @@ export function resetActiveInstanceForTesting(): void {
   }
 }
 
+function keepBackgroundAlive(): void {
+  const runtime = getExtensionRuntime();
+  if (!runtime?.connect) return;
+  try {
+    const port = runtime.connect({ name: 'aetherdub-keepalive' });
+    port.onDisconnect?.addListener(() => {
+      setTimeout(keepBackgroundAlive, 1500);
+    });
+  } catch {
+    // Isolated world without runtime — in-process translation fallback handles this.
+  }
+}
+
 export default defineContentScript({
   matches: ['*://*.youtube.com/*'],
+  world: 'ISOLATED',
   runAt: 'document_idle',
   main() {
+    keepBackgroundAlive();
     tryMount();
 
     // YouTube SPA navigation events — remount HUD in dormant state,

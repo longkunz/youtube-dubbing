@@ -177,9 +177,9 @@ describe('CyberCockpit', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
   });
 
-  it('defaults the Engine badge to GEMINI-2.0', () => {
+  it('defaults the Engine badge to GEMINI-3.8-FLASH', () => {
     render(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText('GEMINI-2.0')).toBeInTheDocument();
+    expect(screen.getByText('GEMINI-3.8-FLASH')).toBeInTheDocument();
   });
 
   it('renders the configured engine label instead of the default', () => {
@@ -187,9 +187,9 @@ describe('CyberCockpit', () => {
       <CyberCockpit isOpen={true} onClose={vi.fn()} engineLabel="GPT-4O-MINI" />
     );
     expect(screen.getByText('GPT-4O-MINI')).toBeInTheDocument();
-    expect(screen.queryByText('GEMINI-2.0')).not.toBeInTheDocument();
+    expect(screen.queryByText('GEMINI-3.8-FLASH')).not.toBeInTheDocument();
 
     rerender(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText('GEMINI-2.0')).toBeInTheDocument();
+    expect(screen.getByText('GEMINI-3.8-FLASH')).toBeInTheDocument();
   });
 });

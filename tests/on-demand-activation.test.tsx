@@ -129,6 +129,34 @@ describe('activateDubbing — Cache Hit Fast Path', () => {
     expect(callbacks.setEnabled).toHaveBeenCalledWith(true);
     expect(result).toBe('cache-hit');
   });
+
+  it('looks up SegmentCache using the requested target language', { timeout: 15_000 }, async () => {
+    const getTranscript = vi.fn().mockResolvedValue({
+      videoId: 'vid1',
+      targetLanguage: 'ja',
+      segments: [{ id: '1', startTime: 0, endTime: 2, duration: 2, sourceText: 'Hi', translatedText: 'こんにちは' }],
+    });
+    vi.mocked(SegmentCache).prototype.getTranscript = getTranscript;
+
+    const mockPipeline = vi.fn().mockResolvedValue(null);
+    const video = makeVideo(false);
+    const { callbacks, instance } = makeHud();
+    const ac = new AbortController();
+
+    const result = await activateDubbing(
+      video,
+      instance,
+      callbacks,
+      ac.signal,
+      'vid1',
+      mockPipeline,
+      'ja',
+    );
+
+    expect(getTranscript).toHaveBeenCalledWith('vid1', 'ja', 'gemini');
+    expect(mockPipeline).not.toHaveBeenCalled();
+    expect(result).toBe('cache-hit');
+  });
 });
 
 // ── Slice 3: activateDubbing — Cache Miss (Pause & Buffer) ────────────────────
@@ -146,8 +174,9 @@ describe('activateDubbing — Cache Miss Pause-and-Buffer', () => {
     const { callbacks, instance } = makeHud();
     const ac = new AbortController();
 
-    await activateDubbing(video, instance, callbacks, ac.signal, 'vid1', mockPipeline);
+    await activateDubbing(video, instance, callbacks, ac.signal, 'vid1', mockPipeline, 'es');
 
+    expect(mockPipeline).toHaveBeenCalledWith(instance, video, 'es');
     expect(video.pause).toHaveBeenCalledTimes(1);
     expect(callbacks.setPreparationMode).toHaveBeenCalledWith('preparing');
     expect(callbacks.setEnabled).toHaveBeenCalledWith(true);

@@ -1,6 +1,13 @@
 import { CaptionTrack, PlayerResponseCaptions, Segment, Transcript } from '../../types/domain';
 import { parseTimedTextJson, parseTimedTextXml } from './parser';
 import { SentenceMerger } from './merger';
+import {
+  alignTranslatedCuesWithSource,
+  pickCaptionTrack,
+  selectTargetLanguageTrack,
+  selectTranslatableSourceTrack,
+  withMachineTranslation,
+} from './youtube-caption-translation';
 
 export interface TranscriptFetcherOptions {
   fetchFn?: typeof fetch;
@@ -22,6 +29,19 @@ export interface TranscriptFetcherOptions {
  * visibly rendered in the player.
  */
 export const POT_GATED_URL_MARKER = 'exp=xpe';
+
+function languagePrefixEquals(code: string | undefined, wanted: string): boolean {
+  if (!code || !wanted) return false;
+  return code.toLowerCase().slice(0, 2) === wanted.toLowerCase().slice(0, 2);
+}
+
+function parseCaptionBody(rawText: string): Segment[] {
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith('<')) {
+    return parseTimedTextXml(trimmed);
+  }
+  return parseTimedTextJson(trimmed);
+}
 
 export function isPotTokenError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -124,7 +144,7 @@ export class TranscriptFetcher {
         languageCode: track.languageCode,
         name,
         kind: track.kind === 'asr' ? 'asr' : undefined,
-        isTranslatable: track.isTranslatable ?? false
+        isTranslatable: track.isTranslatable
       };
     });
   }
@@ -180,30 +200,130 @@ export class TranscriptFetcher {
     }
 
     // Only use tracks that have a URL we can actually fetch
-    const fetchable = tracks.filter((t) => !!t.baseUrl);
-    // If no track has a baseUrl, fall back to any track (caller may fill in URL later)
-    const candidates = fetchable.length > 0 ? fetchable : tracks;
+    return pickCaptionTrack(tracks, preferredLang);
+  }
 
-    const normalizedLang = preferredLang.toLowerCase().slice(0, 2);
+  /**
+   * Acquire a translated Transcript from YouTube Caption Tracks (ADR-0009).
+   * Prefers a target-language track; otherwise machine-translates a translatable source.
+   * Dual-fetches source cues for preview alignment. Does not call an LLM.
+   */
+  public async fetchYoutubeCaptionTranslation(
+    videoId: string,
+    options: FetchTranscriptOptions & { targetLanguage: string },
+  ): Promise<Transcript> {
+    const targetLanguage = options.targetLanguage;
+    const preferredLang = options.preferredLang || 'en';
 
-    // 1. Exact match language, manual CC
-    const exactManual = candidates.find(
-      (t) => t.languageCode?.toLowerCase().startsWith(normalizedLang) && t.kind !== 'asr'
-    );
-    if (exactManual) return exactManual;
+    let tracks: CaptionTrack[] = [];
+    if (options.trackUrl) {
+      tracks = [{
+        baseUrl: options.trackUrl,
+        languageCode: preferredLang,
+        isTranslatable: true,
+      }];
+    } else {
+      const resolved = this.resolveTracks(videoId, options);
+      tracks = resolved.filter((t) => !!t.baseUrl);
+    }
 
-    // 2. Exact match language, auto-generated CC (asr)
-    const exactAsr = candidates.find(
-      (t) => t.languageCode?.toLowerCase().startsWith(normalizedLang) && t.kind === 'asr'
-    );
-    if (exactAsr) return exactAsr;
+    if (tracks.length === 0) {
+      throw new Error(`No caption tracks found for video ${videoId}`);
+    }
 
-    // 3. Any manual CC
-    const anyManual = candidates.find((t) => t.kind !== 'asr');
-    if (anyManual) return anyManual;
+    const targetTrack = selectTargetLanguageTrack(tracks, targetLanguage);
+    const translatableSource = selectTranslatableSourceTrack(tracks, preferredLang);
+    const previewSource =
+      translatableSource
+      ?? this.selectBestCaptionTrack(
+        tracks.filter((t) => !languagePrefixEquals(t.languageCode, targetLanguage)),
+        preferredLang,
+      )
+      ?? this.selectBestCaptionTrack(tracks, preferredLang);
 
-    // 4. First available track
-    return candidates[0];
+    if (!targetTrack && !translatableSource) {
+      throw new Error(
+        `YouTube Caption Translation unavailable: no target-language or translatable source Caption Track for video ${videoId}`,
+      );
+    }
+
+    const translatedTrack = targetTrack ?? translatableSource!;
+    const translatedUrl = targetTrack
+      ? translatedTrack.baseUrl
+      : withMachineTranslation(translatedTrack.baseUrl, targetLanguage);
+
+    const translatedRaw = await this.fetchCaptionBody(videoId, translatedUrl);
+    const translatedCues = parseCaptionBody(translatedRaw);
+    if (translatedCues.length === 0) {
+      throw new Error(`Empty caption response received for video ${videoId}`);
+    }
+
+    let sourceCues: Segment[] = [];
+    const sourceUrl = previewSource?.baseUrl;
+    if (sourceUrl && sourceUrl !== translatedUrl) {
+      try {
+        const sourceRaw = await this.fetchCaptionBody(videoId, sourceUrl);
+        sourceCues = parseCaptionBody(sourceRaw);
+      } catch {
+        // Preview is optional; Dub Track still proceeds with translated cues.
+      }
+    }
+
+    const aligned = sourceCues.length > 0
+      ? alignTranslatedCuesWithSource(sourceCues, translatedCues)
+      : translatedCues.map((cue, index) => ({
+          ...cue,
+          id: cue.id || `yt-${index + 1}`,
+          translatedText: cue.sourceText,
+        }));
+
+    const merged = this.merger.merge(aligned);
+    const withTranslation = merged.map((seg) => ({
+      ...seg,
+      translatedText: seg.translatedText || seg.sourceText,
+    }));
+
+    return {
+      videoId,
+      sourceLanguage: previewSource?.languageCode || translatedTrack.languageCode || preferredLang,
+      targetLanguage,
+      segments: withTranslation,
+      isAutoGenerated: translatedTrack.kind === 'asr' || translatedUrl.includes('kind=asr'),
+    };
+  }
+
+  private resolveTracks(videoId: string, options: FetchTranscriptOptions): CaptionTrack[] {
+    let domTracks = options.captionTracks;
+    const prTracks = options.playerResponse
+      ? this.extractCaptionTracks(options.playerResponse)
+      : undefined;
+
+    const domHasUrls = domTracks && domTracks.some((t) => !!t.baseUrl);
+    if (domHasUrls) return domTracks ?? [];
+    if (prTracks && prTracks.length > 0) return prTracks;
+    if (domTracks !== undefined && domTracks.length === 0) {
+      throw new Error(`No caption tracks found for video ${videoId}`);
+    }
+    return [];
+  }
+
+  private async fetchCaptionBody(videoId: string, url: string): Promise<string> {
+    const normalizedUrl = normalizeTimedTextUrl(url);
+    const res = await this.fetchWithRetry(normalizedUrl);
+    if (!res || !res.ok) {
+      const status = res ? (res as Response).status : 0;
+      throw new Error(
+        `Failed to fetch timedtext captions: ${res ? `http-${status}` : 'network error'} for video ${videoId}`,
+      );
+    }
+    const rawText = await res.text();
+    if (!rawText.trim()) {
+      if (normalizedUrl.includes(POT_GATED_URL_MARKER)) {
+        throw createPotTokenRequiredError(videoId);
+      }
+      throw new Error(`Empty caption response received for video ${videoId}`);
+    }
+    return rawText;
   }
 
   /**
@@ -363,6 +483,14 @@ export class TranscriptFetcher {
         return this.parseAndReturn(text, videoId, url, track, preferredLang);
       }
 
+      const allPotEmpty =
+        ordered.every((track) => (track.baseUrl ?? '').includes(POT_GATED_URL_MARKER)) &&
+        failures.length > 0 &&
+        failures.every((reason) => reason.endsWith(':empty'));
+      if (allPotEmpty) {
+        throw createPotTokenRequiredError(videoId);
+      }
+
       const detail = failures.length > 0 ? ` (${failures.join(', ')})` : '';
       throw new Error(`Failed to fetch timedtext captions: all ${ordered.length} candidate track(s) returned empty or failed for video ${videoId}${detail}`);
     }
@@ -401,6 +529,9 @@ export class TranscriptFetcher {
     }
     const rawText = await res.text();
     if (!rawText.trim()) {
+      if (normalizedUrl.includes(POT_GATED_URL_MARKER)) {
+        throw createPotTokenRequiredError(videoId);
+      }
       throw new Error(`Empty caption response received for video ${videoId}`);
     }
     return this.parseAndReturn(rawText, videoId, normalizedUrl, track, preferredLang);

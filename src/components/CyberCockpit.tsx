@@ -29,7 +29,7 @@ export interface CyberCockpitProps {
   isPlaying?: boolean;
   isDucked?: boolean;
   onOpenSettings?: () => void;
-  /** Translation engine badge (e.g. GEMINI-2.0, GPT-4O-MINI). Defaults to GEMINI-2.0. */
+  /** Translation engine badge (e.g. GEMINI-3.8-FLASH, GPT-4O-MINI). */
   engineLabel?: string;
 }
 
@@ -49,7 +49,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   isPlaying = false,
   isDucked = false,
   onOpenSettings,
-  engineLabel = 'GEMINI-2.0',
+  engineLabel = 'GEMINI-3.8-FLASH',
 }) => {
   const [internalVoice, setInternalVoice] = useState('vi-VN-HoaiMyNeural');
   const [internalMultiSpeaker, setInternalMultiSpeaker] = useState(isMultiSpeakerEnabled);

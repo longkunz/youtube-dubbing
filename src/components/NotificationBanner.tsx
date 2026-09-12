@@ -13,7 +13,7 @@ export interface NotificationBannerProps {
 }
 
 const DEFAULT_BANNER_MESSAGE =
-  'No captions found for this video. Add a Groq/OpenAI API key in Settings to activate Whisper STT.';
+  'No captions could be downloaded for this video. If CC is visible, wait a few seconds and retry (Proof-of-Origin). Add a Groq API key in Settings to enable Whisper STT fallback.';
 
 /**
  * Cyberpunk Notification Banner displayed in-player when captions are unavailable,

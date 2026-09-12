@@ -1,4 +1,5 @@
 import type { Segment, Transcript } from '../../types/domain';
+import { DEFAULT_GEMINI_MODEL, GEMINI_FALLBACK_MODELS } from '../../storage/settings';
 import { defaultFetch } from '../default-fetch';
 import { TranslationError, TranslationErrorCode } from './errors';
 import type { TranslationClient, TranslateOptions, FetchFn } from './types';
@@ -12,7 +13,7 @@ export type { TranslationClient, TranslateOptions, FetchFn };
 export interface GeminiTranslationClientOptions {
   /** Explicit Gemini API key. When omitted the client reads from chrome.storage.local. */
   apiKey?: string;
-  /** Gemini model to use. Defaults to "gemini-3.8-flash". */
+  /** Gemini model to use. Defaults to DEFAULT_GEMINI_MODEL. */
   model?: string;
   /**
    * Injectable fetch function. Defaults to the global `fetch`.
@@ -35,9 +36,15 @@ interface GeminiTranslationPayload {
   translations: GeminiTranslationItem[];
 }
 
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+}
+
 interface GeminiCandidate {
-  content: {
-    parts: Array<{ text: string }>;
+  finishReason?: string;
+  content?: {
+    parts?: GeminiPart[];
   };
 }
 
@@ -49,13 +56,8 @@ interface GeminiApiResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODEL = 'gemini-3.8-flash';
-const FALLBACK_MODELS = [
-  'gemini-3.8-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest',
-] as const;
+const DEFAULT_MODEL = DEFAULT_GEMINI_MODEL;
+const FALLBACK_MODELS = GEMINI_FALLBACK_MODELS;
 const DEFAULT_TARGET_LANGUAGE = 'vi';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MAX_LISTED_MODEL_RETRIES = 3;
@@ -114,6 +116,48 @@ function isNotFoundError(err: unknown): boolean {
 
 function normalizeListedModelName(name: string): string {
   return name.replace(/^models\//, '').trim();
+}
+
+/**
+ * Lowest supported thinking setting for the given Gemini model.
+ * Gemini 3.8/3.7 Flash and Gemini 3 Pro reject `thinkingLevel: "minimal"`;
+ * Gemini 2.5 uses `thinkingBudget: 0` to turn thinking off.
+ */
+function generationConfigForModel(model: string): {
+  thinkingConfig: { thinkingLevel: 'low' | 'minimal' } | { thinkingBudget: number };
+  responseMimeType: 'application/json';
+  maxOutputTokens: number;
+} {
+  const id = model.toLowerCase();
+  const thinkingConfig = id.includes('gemini-3')
+    ? {
+        thinkingLevel: (/gemini-3\.[78]/.test(id) || id.includes('pro')
+          ? 'low'
+          : 'minimal') as 'low' | 'minimal',
+      }
+    : { thinkingBudget: 0 };
+
+  return {
+    thinkingConfig,
+    responseMimeType: 'application/json',
+    maxOutputTokens: 16384,
+  };
+}
+
+/** Skip thought drafts and join remaining text parts into the model answer. */
+function extractGeminiAnswerText(body: GeminiApiResponse): string | undefined {
+  const parts = body.candidates?.[0]?.content?.parts ?? [];
+  const answer = parts
+    .filter((part) => !part.thought && typeof part.text === 'string' && part.text.length > 0)
+    .map((part) => part.text as string)
+    .join('');
+  if (answer) return answer;
+
+  const fallback = parts
+    .filter((part) => typeof part.text === 'string' && part.text.length > 0)
+    .map((part) => part.text as string)
+    .join('');
+  return fallback || undefined;
 }
 
 function isUsableListedFlashModel(name: string, methods: string[] | undefined): boolean {
@@ -336,6 +380,7 @@ export class GeminiTranslationClient implements TranslationClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: generationConfigForModel(model),
         }),
       });
     } catch (err) {
@@ -360,12 +405,15 @@ export class GeminiTranslationClient implements TranslationClient {
       );
     }
 
-    const text = body.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = extractGeminiAnswerText(body);
 
     if (!text) {
+      const finishReason = body.candidates?.[0]?.finishReason;
       throw new TranslationError(
         TranslationErrorCode.INVALID_RESPONSE,
-        'Gemini API returned an empty or malformed response (no candidates).',
+        finishReason
+          ? `Gemini API returned an empty or malformed response (no candidates, finishReason=${finishReason}).`
+          : 'Gemini API returned an empty or malformed response (no candidates).',
       );
     }
 

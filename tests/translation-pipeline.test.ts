@@ -49,6 +49,24 @@ function makeOkResponse(body: string) {
   };
 }
 
+function makeCandidateResponse(
+  parts: Array<{ text?: string; thought?: boolean }>,
+  finishReason?: string,
+) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      candidates: [
+        {
+          finishReason,
+          content: { parts },
+        },
+      ],
+    }),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // GeminiTranslationClient — constructor options
 // ---------------------------------------------------------------------------
@@ -164,6 +182,84 @@ describe('GeminiTranslationClient', () => {
       expect(calledUrl).toContain('gemini-3.8-flash');
       expect(calledUrl).toContain('my-secret-key');
       expect(calledUrl).not.toContain('%20');
+    });
+
+    it('disables Gemini 3.8 reasoning with thinkingLevel low on generateContent', async () => {
+      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
+
+      const client = new GeminiTranslationClient({ apiKey: 'key-test', fetchFn: mockFetch });
+      await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' });
+    });
+
+    it('disables Gemini 3.5 reasoning with thinkingLevel minimal on generateContent', async () => {
+      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
+
+      const client = new GeminiTranslationClient({
+        apiKey: 'key-test',
+        model: 'gemini-3.5-flash',
+        fetchFn: mockFetch,
+      });
+      await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    });
+
+    it('disables Gemini 2.5 reasoning with thinkingBudget 0 on generateContent', async () => {
+      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
+
+      const client = new GeminiTranslationClient({
+        apiKey: 'key-test',
+        model: 'gemini-2.5-flash',
+        fetchFn: mockFetch,
+      });
+      await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    });
+
+    it('requests JSON mime type and a large maxOutputTokens so translations are not truncated', async () => {
+      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(TRANSLATED_SEGMENTS_JSON)));
+
+      const client = new GeminiTranslationClient({ apiKey: 'key-test', fetchFn: mockFetch });
+      await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
+      expect(body.generationConfig.responseMimeType).toBe('application/json');
+      expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(8192);
+    });
+
+    it('uses the JSON answer part when Gemini prefixes a truncated thought draft', async () => {
+      mockFetch.mockResolvedValueOnce(
+        makeCandidateResponse([
+          { thought: true, text: '{\n  "translations":' },
+          { text: JSON.stringify(TRANSLATED_SEGMENTS_JSON) },
+        ]),
+      );
+
+      const client = new GeminiTranslationClient({ apiKey: 'key-test', fetchFn: mockFetch });
+      const result = await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      expect(result.segments[0].translatedText).toBe('Xin chào mọi người, chào mừng đến kênh.');
+    });
+
+    it('concatenates split JSON text parts into one translations payload', async () => {
+      const json = JSON.stringify(TRANSLATED_SEGMENTS_JSON);
+      mockFetch.mockResolvedValueOnce(
+        makeCandidateResponse([
+          { text: json.slice(0, 18) },
+          { text: json.slice(18) },
+        ]),
+      );
+
+      const client = new GeminiTranslationClient({ apiKey: 'key-test', fetchFn: mockFetch });
+      const result = await client.translateTranscript(BASE_TRANSCRIPT, { targetLanguage: 'vi' });
+
+      expect(result.segments[1].translatedText).toBe('Hôm nay chúng ta sẽ xây dựng một Chrome extension.');
     });
   });
 

@@ -9,6 +9,7 @@ import {
   GEMINI_MODEL_PRESETS,
   type UserSettings,
   type PingOpenAiResult,
+  type TranslationProvider,
 } from '../../storage/settings';
 import { defaultFetch } from '../../core/default-fetch';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
@@ -70,7 +71,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   ttsPreviewClient,
   createPreviewAudio,
 }) => {
-  const [translationProvider, setTranslationProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
+  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('gemini');
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [geminiModel, setGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
   const [geminiModelIsCustom, setGeminiModelIsCustom] = useState(false);
@@ -154,7 +155,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       openaiEndpoint,
       openaiModel,
       openaiApiKey,
-      groqApiKey,
+      groqApiKey: groqApiKey.trim(),
       ttsProvider,
       ttsPitch,
       ttsRate,
@@ -339,16 +340,22 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   aria-label="Translation Provider"
                   value={translationProvider}
                   onChange={(e) =>
-                    setTranslationProvider(e.target.value as 'gemini' | 'openai-compatible')
+                    setTranslationProvider(e.target.value as TranslationProvider)
                   }
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
                 >
                   <option value="openai-compatible">OpenAI-Compatible Proxy (/v1/chat/completions)</option>
                   <option value="gemini">Google Gemini (Direct REST)</option>
+                  <option value="youtube-caption-translation">YouTube Caption Translation</option>
                 </select>
               </div>
 
-              {translationProvider === 'openai-compatible' ? (
+              {translationProvider === 'youtube-caption-translation' ? (
+                <p className="text-xs font-mono text-gray-400 leading-relaxed">
+                  Uses a target-language YouTube Caption Track when available, otherwise YouTube
+                  machine translation of a translatable source track. No Gemini API key required.
+                </p>
+              ) : translationProvider === 'openai-compatible' ? (
                 <>
                   {/* OpenAI Proxy Endpoint URL */}
                   <div>
@@ -515,7 +522,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   htmlFor="groq-key"
                   className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
                 >
-                  Groq / OpenAI API Key (Whisper STT Fallback)
+                  Groq API Key (Whisper STT fallback when captions fail)
                 </label>
                 <div className="relative flex items-center">
                   <input
@@ -540,6 +547,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                     )}
                   </button>
                 </div>
+                <p className="mt-2 text-[11px] text-gray-500 font-mono leading-relaxed">
+                  Used only after YouTube captions fail. Does not enable Netflix, lip-sync, or paid TTS.
+                </p>
               </div>
 
               {/* Action Buttons & Ping Badge */}
@@ -554,6 +564,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                     Save Credentials
                   </button>
 
+                  {translationProvider !== 'youtube-caption-translation' ? (
                   <button
                     type="button"
                     aria-label="Ping Connection (Test Connection)"
@@ -564,6 +575,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                     <Activity className={`w-3.5 h-3.5 ${pingStatus?.loading ? 'animate-spin' : ''}`} />
                     Test Connection
                   </button>
+                  ) : null}
                 </div>
 
                 {/* Ping Result Badge */}

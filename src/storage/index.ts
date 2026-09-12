@@ -13,5 +13,6 @@ export {
   pingGeminiConnection,
   DEFAULT_USER_SETTINGS,
 } from './settings';
-export type { UserSettings } from './settings';
+export type { UserSettings, TranslationProvider } from './settings';
+export { YOUTUBE_CAPTION_TRANSLATION } from './settings';
 

@@ -14,8 +14,12 @@ YouTube Dubbing is a 100% client-side Chrome/Web extension that translates and d
 
 - **100% Client-Side & BYOK (Bring Your Own Key)**: Zero server costs, zero telemetry tracking, and total user privacy. Enter your Google Gemini API key once in the Command Center.
 - **Intelligent Sentence Restructuring**: Merges fragmented YouTube auto-captions (silence gap < 0.4s) into cohesive sentences with preserved timeline boundaries before translation.
-- **Full Upfront Translation (Gemini 2.0 Flash)**: Translates the full video transcript in a single batch pass (<2s latency) ensuring pronouns, tone, and technical terminology remain consistent across the entire video.
+- **On-Demand Activation**: Toolbar HUD mounts dormant (`DUB: OFF`). Translation and TTS start only when you toggle dubbing on (ADR-0008).
+- **Configurable Gemini Flash + OpenAI-compatible proxies**: Default model `gemini-3.8-flash` with Command Center presets, custom IDs, 404 fallback, and optional `/v1/chat/completions` gateways.
+- **Full Upfront Translation**: Translates the full video transcript in a single batch pass when dubbing is activated, ensuring pronouns, tone, and technical terminology remain consistent.
+- **Cockpit target language**: Cache lookup and translation follow the language selected in the Cyber Cockpit (default `vi`).
 - **Sliding-Window Speech Synthesis**: Pre-synthesizes audio 30–60 seconds ahead using Microsoft Edge Neural TTS (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`) with automatic 3x WebSocket retry and fallback.
+- **Whisper Fallback**: If YouTube captions cannot be downloaded and a Groq API key is set, transcribe unsigned player audio via Groq Whisper. Netflix, lip-sync, and paid TTS are out of scope.
 - **Dynamic Audio Ducking & Time-Stretching**: Smoothly attenuates original video volume to ~20% in 150ms during active speech and scales TTS rate (1.0x–1.35x) to maintain perfect synchronization with speaker lip movements.
 - **Zero-CSS-Bleed Shadow DOM Mount**: In-player controls (`NEURAL DUB` trigger pill and the expandable Cyber Cockpit) are isolated within a Shadow DOM container inside `.ytp-right-controls`.
 - **Gentle, Native Subtitles**: Subtitle text overlay retains YouTube's clean, distraction-free aesthetic (`rgba(8, 8, 8, 0.84)` rounded pill with crisp white text).
@@ -32,6 +36,8 @@ The project's architectural decisions are documented as lightweight ADRs:
 - [ADR-0003: Full Transcript Pre-Translation with Sliding-Window TTS](docs/adr/0003-full-pretranslation-sliding-window-tts.md)
 - [ADR-0004: In-Player Controls via Shadow DOM Injection](docs/adr/0004-shadow-dom-in-player-controls.md)
 - [ADR-0006: Hyper-Fantastic Sci-Fi Audio HUD Design System](docs/adr/0006-hyper-fantastic-hud-design-system.md)
+- [ADR-0007: Pluggable Multi-Provider Translation](docs/adr/0007-pluggable-translation-openai-compatible-proxy.md)
+- [ADR-0008: On-Demand Pause-and-Buffer Activation](docs/adr/0008-on-demand-pause-and-buffer-activation.md)
 
 ---
 
@@ -82,6 +88,9 @@ Issues are tracked on GitHub: [GitHub Issues](https://github.com/longkunz/youtub
 - [Issue #7: Gentle Subtitle Overlay & Full Cyber Cockpit Integration](https://github.com/longkunz/youtube-dubbing/issues/7)
 - [Issue #8: Command Center Options Dashboard & Resilience Fallbacks](https://github.com/longkunz/youtube-dubbing/issues/8)
 - [Issue #9: Multi-Speaker Diarization & Dynamic Voice Switching](https://github.com/longkunz/youtube-dubbing/issues/9)
+- [Issue #10: Pluggable Multi-Provider Translation with OpenAI-Compatible Proxy](https://github.com/longkunz/youtube-dubbing/issues/10)
+- [Issue #11: On-Demand Pause-and-Buffer Activation](https://github.com/longkunz/youtube-dubbing/issues/11)
+- [Issue #12: Configurable Gemini Model Selection](https://github.com/longkunz/youtube-dubbing/issues/12)
 
 ---
 

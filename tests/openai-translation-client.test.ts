@@ -133,6 +133,8 @@ describe('OpenAiCompatibleTranslationClient', () => {
     expect(parsedBody.temperature).toBe(0.3);
     expect(parsedBody.response_format).toEqual({ type: 'json_object' });
     expect(parsedBody.messages).toHaveLength(2);
+    expect(parsedBody.reasoning_effort).toBe('none');
+    expect(parsedBody.reasoning).toEqual({ effort: 'none' });
   });
 
   it('omits Authorization header when apiKey is not provided or empty', async () => {
@@ -324,6 +326,8 @@ describe('pingOpenAiConnection', () => {
     const body = JSON.parse(calledInit?.body as string);
     expect(body.model).toBe('gpt-4o-mini');
     expect(body.max_tokens).toBe(5);
+    expect(body.reasoning_effort).toBe('none');
+    expect(body.reasoning).toEqual({ effort: 'none' });
   });
 
   it('omits Authorization header when apiKey is empty in ping', async () => {

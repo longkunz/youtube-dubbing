@@ -62,10 +62,34 @@ export class SentenceMerger {
       return [];
     }
 
-    // Work on a copy with non-empty text, sorted by startTime
+    const normalize = (text?: string): string => (text || '').replace(/\s+/g, ' ').trim();
+    const joinText = (left?: string, right?: string): string => {
+      const a = normalize(left);
+      const b = normalize(right);
+      if (!a) return b;
+      if (!b) return a;
+      return `${a} ${b}`.replace(/\s+/g, ' ').trim();
+    };
+    const spoken = (s: Segment): string => normalize(s.sourceText) || normalize(s.translatedText);
+
+    const cloneCue = (s: Segment): Segment => {
+      const sourceText = normalize(s.sourceText);
+      const translatedText = normalize(s.translatedText);
+      return {
+        id: s.id,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        duration: s.duration,
+        sourceText,
+        ...(translatedText ? { translatedText } : {}),
+      };
+    };
+
+    // Keep cues that have source or already-translated text (YouTube Caption Translation).
     const sorted = segments
-      .filter((s) => s.sourceText && s.sourceText.trim().length > 0)
-      .sort((a, b) => a.startTime - b.startTime);
+      .filter((s) => spoken(s).length > 0)
+      .sort((a, b) => a.startTime - b.startTime)
+      .map(cloneCue);
 
     if (sorted.length === 0) {
       return [];
@@ -73,56 +97,41 @@ export class SentenceMerger {
 
     const merged: Segment[] = [];
 
-    let current: Segment = {
-      id: sorted[0].id,
-      startTime: sorted[0].startTime,
-      endTime: sorted[0].endTime,
-      duration: sorted[0].duration,
-      sourceText: sorted[0].sourceText.replace(/\s+/g, ' ').trim()
-    };
+    let current: Segment = cloneCue(sorted[0]);
 
     for (let i = 1; i < sorted.length; i++) {
       const next = sorted[i];
       const gap = next.startTime - current.endTime;
-      const cleanNextText = next.sourceText.replace(/\s+/g, ' ').trim();
+      const cleanNextSpoken = spoken(next);
 
-      if (!cleanNextText) {
+      if (!cleanNextSpoken) {
         continue;
       }
 
       const potentialDuration = Math.max(current.endTime, next.endTime) - current.startTime;
-      const potentialWords = countWords(current.sourceText) + countWords(cleanNextText);
+      const potentialWords = countWords(spoken(current)) + countWords(cleanNextSpoken);
 
-      // Check if we can merge:
-      // 1. Gap is smaller than threshold (e.g. < 0.4s)
-      // 2. Previous segment does not end with terminal punctuation
-      // 3. Merged segment does not exceed maxDuration or maxWords
       const canMerge =
         gap < this.gapThreshold &&
-        !this.endsWithSentencePunctuation(current.sourceText) &&
+        !this.endsWithSentencePunctuation(spoken(current)) &&
         potentialDuration <= this.maxDuration &&
         potentialWords <= this.maxWords;
 
       if (canMerge) {
-        const combinedText = `${current.sourceText} ${cleanNextText}`.replace(/\s+/g, ' ').trim();
         const endTime = Math.max(current.endTime, next.endTime);
         const duration = Number((endTime - current.startTime).toFixed(3));
+        const translatedText = joinText(current.translatedText, next.translatedText);
 
         current = {
           ...current,
           endTime,
           duration,
-          sourceText: combinedText
+          sourceText: joinText(current.sourceText, next.sourceText),
+          ...(translatedText ? { translatedText } : {}),
         };
       } else {
         merged.push(current);
-        current = {
-          id: next.id,
-          startTime: next.startTime,
-          endTime: next.endTime,
-          duration: next.duration,
-          sourceText: cleanNextText
-        };
+        current = cloneCue(next);
       }
     }
 

@@ -341,6 +341,30 @@ describe('TranscriptFetcher', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
+    it('throws a POT-specific error when every exp=xpe gated candidate returns an empty body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: async () => '',
+      });
+
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch, retryDelaysMs: [] });
+      await expect(
+        fetcher.fetchTranscript('video-pot-all-empty', {
+          captionTracks: [
+            {
+              baseUrl: 'https://www.youtube.com/api/timedtext?v=video-pot-all-empty&exp=xpe&lang=en',
+              languageCode: 'en',
+            },
+            {
+              baseUrl: 'https://www.youtube.com/api/timedtext?v=video-pot-all-empty&exp=xpe&lang=vi',
+              languageCode: 'vi',
+            },
+          ],
+          preferredLang: 'en',
+        }),
+      ).rejects.toThrow(/POT/i);
+    });
+
     it('throws a POT-specific error when an exp=xpe gated track returns an empty body', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
@@ -509,6 +533,194 @@ describe('TranscriptFetcher', () => {
       expect(transcript.segments.length).toBeGreaterThan(0);
       // 3 (en with retries) + 1 (vi, no retry) + 1 (fr, success) = 5, not 9
       expect(mockFetch).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe('YouTube Caption Translation', () => {
+    function json3(cues: Array<{ startMs: number; durMs: number; text: string }>): string {
+      return JSON.stringify({
+        events: cues.map((c) => ({
+          tStartMs: c.startMs,
+          dDurationMs: c.durMs,
+          segs: [{ utf8: c.text }],
+        })),
+      });
+    }
+
+    it('preserves pot and existing params when adding machine translation', async () => {
+      const { withMachineTranslation } = await import('../src/core/transcript/youtube-caption-translation');
+      const url = withMachineTranslation(
+        'https://www.youtube.com/api/timedtext?v=vid&lang=en&fmt=json3&c=WEB&pot=TOKEN123',
+        'vi',
+      );
+      expect(url).toContain('pot=TOKEN123');
+      expect(url).toContain('fmt=json3');
+      expect(url).toContain('c=WEB');
+      expect(url).toContain('tlang=vi');
+    });
+
+    it('uses a target-language Caption Track without tlang', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: async () => json3([{ startMs: 0, durMs: 2000, text: 'Xin chào.' }]),
+      });
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      const transcript = await fetcher.fetchYoutubeCaptionTranslation('vid-target', {
+        targetLanguage: 'vi',
+        preferredLang: 'en',
+        captionTracks: [
+          {
+            baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-target&lang=vi&pot=T',
+            languageCode: 'vi',
+          },
+          {
+            baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-target&lang=en&pot=T',
+            languageCode: 'en',
+            isTranslatable: true,
+          },
+        ],
+      });
+
+      expect(transcript.segments[0].translatedText).toMatch(/Xin chào/);
+      const translatedCalls = mockFetch.mock.calls.filter((c: string[]) => String(c[0]).includes('lang=vi'));
+      expect(translatedCalls.some((c: string[]) => !String(c[0]).includes('tlang='))).toBe(true);
+    });
+
+    it('machine-translates a translatable source and dual-fetches source text', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        const u = String(url);
+        if (u.includes('tlang=vi')) {
+          return {
+            ok: true,
+            text: async () => json3([{ startMs: 0, durMs: 2500, text: 'Xin chào mọi người.' }]),
+          };
+        }
+        return {
+          ok: true,
+          text: async () => json3([{ startMs: 0, durMs: 2500, text: 'Hello everyone.' }]),
+        };
+      });
+
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      const transcript = await fetcher.fetchYoutubeCaptionTranslation('vid-tlang', {
+        targetLanguage: 'vi',
+        preferredLang: 'en',
+        captionTracks: [
+          {
+            baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-tlang&lang=en&fmt=json3&c=WEB&pot=TOKEN123',
+            languageCode: 'en',
+            isTranslatable: true,
+          },
+        ],
+      });
+
+      expect(transcript.segments[0].translatedText).toMatch(/Xin chào/);
+      expect(transcript.segments[0].sourceText).toMatch(/Hello everyone/);
+      const tlangUrl = mockFetch.mock.calls.map((c: string[]) => String(c[0])).find((u: string) => u.includes('tlang=vi'));
+      expect(tlangUrl).toContain('pot=TOKEN123');
+      expect(tlangUrl).toContain('fmt=json3');
+    });
+
+    it('machine-translates a POT source track when isTranslatable is omitted (player audio-track shape)', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        const u = String(url);
+        if (u.includes('tlang=vi')) {
+          return {
+            ok: true,
+            text: async () => json3([{ startMs: 0, durMs: 2500, text: 'Xin chào mọi người.' }]),
+          };
+        }
+        return {
+          ok: true,
+          text: async () => json3([{ startMs: 0, durMs: 2500, text: 'Hello everyone.' }]),
+        };
+      });
+
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      const transcript = await fetcher.fetchYoutubeCaptionTranslation('EkA4pqXgta0', {
+        targetLanguage: 'vi',
+        preferredLang: 'en',
+        captionTracks: [
+          {
+            baseUrl: 'https://www.youtube.com/api/timedtext?v=EkA4pqXgta0&lang=en&fmt=json3&c=WEB&pot=TOKEN123',
+            languageCode: 'en',
+          },
+        ],
+      });
+
+      expect(transcript.segments[0].translatedText).toMatch(/Xin chào/);
+      expect(mockFetch.mock.calls.some((c: string[]) => String(c[0]).includes('tlang=vi'))).toBe(true);
+    });
+
+    it('throws a YouTube Caption Translation unavailable error when no track is translatable', async () => {
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      await expect(
+        fetcher.fetchYoutubeCaptionTranslation('vid-none', {
+          targetLanguage: 'vi',
+          preferredLang: 'en',
+          captionTracks: [
+            {
+              baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-none&lang=en&pot=T',
+              languageCode: 'en',
+              isTranslatable: false,
+            },
+          ],
+        }),
+      ).rejects.toThrow(/YouTube Caption Translation unavailable/i);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('surfaces HTTP 429 from machine translation', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        text: async () => '',
+      });
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch, retryDelaysMs: [] });
+      await expect(
+        fetcher.fetchYoutubeCaptionTranslation('vid-429', {
+          targetLanguage: 'vi',
+          preferredLang: 'en',
+          captionTracks: [
+            {
+              baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-429&lang=en&pot=T',
+              languageCode: 'en',
+              isTranslatable: true,
+            },
+          ],
+        }),
+      ).rejects.toThrow(/http-429/i);
+    });
+
+    it('keeps Dub Track text when source cues do not overlap', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        const u = String(url);
+        if (u.includes('tlang=vi')) {
+          return {
+            ok: true,
+            text: async () => json3([{ startMs: 8000, durMs: 2000, text: 'Dịch lệch.' }]),
+          };
+        }
+        return {
+          ok: true,
+          text: async () => json3([{ startMs: 0, durMs: 1000, text: 'Hello.' }]),
+        };
+      });
+      const fetcher = new TranscriptFetcher({ fetchFn: mockFetch });
+      const transcript = await fetcher.fetchYoutubeCaptionTranslation('vid-gap', {
+        targetLanguage: 'vi',
+        preferredLang: 'en',
+        captionTracks: [
+          {
+            baseUrl: 'https://www.youtube.com/api/timedtext?v=vid-gap&lang=en&pot=T',
+            languageCode: 'en',
+            isTranslatable: true,
+          },
+        ],
+      });
+      expect(transcript.segments[0].translatedText).toMatch(/Dịch lệch/);
+      expect(transcript.segments[0].sourceText).toBe('');
     });
   });
 });

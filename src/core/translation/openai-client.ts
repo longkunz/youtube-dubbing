@@ -233,6 +233,8 @@ export class OpenAiCompatibleTranslationClient implements TranslationClient {
       temperature: 0.3,
       stream: false,
       response_format: { type: 'json_object' },
+      reasoning_effort: 'none',
+      reasoning: { effort: 'none' },
     };
 
     let response: any;

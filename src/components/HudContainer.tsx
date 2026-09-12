@@ -46,7 +46,9 @@ export interface HudContainerProps {
    * Called when the user clicks the primary pill hit area to enable dubbing.
    * The caller (HudInstance / mount.tsx) is responsible for running activateDubbing().
    */
-  onActivateDubbing?: () => void;
+  onActivateDubbing?: (targetLanguage: string) => void;
+  /** Persist cockpit target language (Command Center / chrome.storage). */
+  onTargetLanguageChange?: (languageCode: string) => void;
   /**
    * Called when the user disables dubbing via the pill or cockpit toggle.
    * The caller is responsible for running deactivateDubbing() / cleanup.
@@ -89,6 +91,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   onConfigureSettings,
   engineLabel,
   onActivateDubbing,
+  onTargetLanguageChange,
   onDeactivateDubbing,
   onCancelPreparation,
   onResumePlayback,
@@ -192,7 +195,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
       onDeactivateDubbing?.();
     } else {
       // Turn ON — caller handles actual pipeline launch
-      onActivateDubbing?.();
+      onActivateDubbing?.(targetLanguage);
     }
   };
 
@@ -203,7 +206,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
       if (orchestrator) {
         orchestrator.handlePlay();
       }
-      onActivateDubbing?.();
+      onActivateDubbing?.(targetLanguage);
     } else {
       setIsEnabledState(false);
       setIsPreparingState(false);
@@ -239,6 +242,10 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   const handleSelectLanguage = (languageCode: string) => {
     setTargetLanguageState(languageCode);
     orchestrator?.setTargetLanguage?.(languageCode);
+    onTargetLanguageChange?.(languageCode);
+    if (isEnabled) {
+      onActivateDubbing?.(languageCode);
+    }
   };
 
   const handleSelectVoice = (voiceId: string) => {

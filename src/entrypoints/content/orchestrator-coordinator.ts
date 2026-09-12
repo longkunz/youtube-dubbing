@@ -10,11 +10,20 @@
  * 6. Reactively updates the in-player Cyber Cockpit Shadow DOM HUD.
  */
 
-import { TranscriptFetcher } from '@/core/transcript/fetcher';
+import { isPotTokenError, TranscriptFetcher } from '@/core/transcript/fetcher';
+import { isYoutubeTranslationOnlyFailure } from '@/core/transcript/youtube-caption-translation';
 import { DubbingOrchestratorImpl } from '@/core/orchestrator/dubbing-orchestrator';
 import { BackgroundDubbingTtsClient } from '@/core/tts/background-tts-client';
+import { extractUnsignedAudioUrl, GroqWhisperClient } from '@/core/stt';
+import { sendExtensionMessage } from '@/core/extension-runtime';
+import { createTranslationClient } from '@/core/translation/factory';
 import { SegmentCache } from '@/storage/segment-cache';
-import { getSettings, type UserSettings } from '@/storage/settings';
+import {
+  DEFAULT_GEMINI_MODEL,
+  getSettings,
+  YOUTUBE_CAPTION_TRANSLATION,
+  type UserSettings,
+} from '@/storage/settings';
 import type { Transcript, Segment, CaptionTrack } from '@/types/domain';
 import type { HudInstance } from './mount';
 
@@ -23,11 +32,15 @@ import type { HudInstance } from './mount';
  * the configured translation provider instead of a hardcoded label.
  */
 export function resolveEngineLabel(settings?: Partial<UserSettings> | null): string {
+  if (settings?.translationProvider === YOUTUBE_CAPTION_TRANSLATION) {
+    return 'YOUTUBE-CC';
+  }
   if (settings?.translationProvider === 'openai-compatible') {
     const model = settings.openaiModel?.trim();
     return model ? model.toUpperCase() : 'OPENAI';
   }
-  return 'GEMINI-2.0';
+  const geminiModel = settings?.geminiModel?.trim();
+  return (geminiModel || DEFAULT_GEMINI_MODEL).toUpperCase();
 }
 
 /**
@@ -69,16 +82,20 @@ export function isThrottleError(err: unknown): boolean {
 
 export interface CoordinatorState {
   activeVideoId: string | null;
+  activeTargetLanguage: string | null;
   orchestrator: DubbingOrchestratorImpl | null;
   cleanupListeners: (() => void) | null;
   isInitializing: boolean;
+  translationAbort: AbortController | null;
 }
 
 const state: CoordinatorState = {
   activeVideoId: null,
+  activeTargetLanguage: null,
   orchestrator: null,
   cleanupListeners: null,
   isInitializing: false,
+  translationAbort: null,
 };
 
 export function getCoordinatorState(): CoordinatorState {
@@ -123,7 +140,7 @@ export function getTracksFromMoviePlayer(): CaptionTrack[] {
           languageCode: t.languageCode,
           name: typeof t.name === 'string' ? t.name : (t.name?.simpleText || t.displayName || t.languageName || ''),
           kind: t.kind === 'asr' ? 'asr' : undefined,
-          isTranslatable: t.isTranslatable ?? false,
+          isTranslatable: t.isTranslatable,
         }));
       }
     }
@@ -155,7 +172,7 @@ export function getTracksFromPlayerAudioTrack(): CaptionTrack[] {
             t?.languageName ||
             '',
           kind: t?.kind === 'asr' ? 'asr' : undefined,
-          isTranslatable: t?.isTranslatable ?? false,
+          isTranslatable: t?.isTranslatable,
         }))
         .filter((t: any) => typeof t.baseUrl === 'string' && t.baseUrl.length > 0 && typeof t.languageCode === 'string');
       // Prefer URLs that already carry a minted Proof-of-Origin token.
@@ -186,6 +203,19 @@ export function sortPotFirst(tracks: CaptionTrack[]): CaptionTrack[] {
 }
 
 /**
+ * Static ytInitialPlayerResponse timedtext URLs are also exp=xpe gated.
+ * If the bridge already proved captions exist but POT is not minted yet,
+ * fetching those static URLs only burns 429 budget on empty bodies.
+ */
+export function shouldSkipStaticPlayerResponseFallback(tracks: CaptionTrack[]): boolean {
+  if (!tracks.length) return false;
+  return tracks.every((track) => {
+    const url = track.baseUrl ?? '';
+    return url.includes('exp=xpe') && !trackHasPot(track);
+  });
+}
+
+/**
  * Read POT-bearing audio track caption URLs from the DOM attribute written by
  * content-bridge.ts (MAIN world). Safe to call from isolated world.
  *
@@ -206,7 +236,7 @@ export function readBridgedAudioTracks(videoId: string): CaptionTrack[] {
       languageCode: t.languageCode ?? '',
       kind: t.kind === 'asr' ? 'asr' : undefined,
       name: t.name ?? '',
-      isTranslatable: t.isTranslatable ?? false,
+      isTranslatable: t.isTranslatable,
     })).filter((t: CaptionTrack) => !!t.baseUrl && !!t.languageCode);
     return sortPotFirst(tracks);
   } catch {
@@ -401,68 +431,83 @@ export async function getPlayerResponse(videoId: string): Promise<any> {
 
 // ── Translation Bridge ────────────────────────────────────────────────────────
 
-export const TRANSLATE_BATCH_SIZE = 25;
-export const TRANSLATE_BATCH_TIMEOUT_MS = 30000;
+export const TRANSLATE_BATCH_SIZE = 8;
+export const TRANSLATE_BATCH_TIMEOUT_MS = 90000;
 
 export interface TranslateViaBackgroundOptions {
-  /** Segments per background message (default 25). Smaller = faster per reply. */
+  /** Segments per background message (default 8). Smaller = faster first Dub Track. */
   batchSize?: number;
-  /** Per-batch timeout in ms (default 30000). */
+  /** Per-batch timeout in ms (default 90000). */
   batchTimeoutMs?: number;
+  /**
+   * Fired after each successful batch with the segments translated so far
+   * (merged onto the original transcript order). Lets the pipeline start
+   * TTS after batch 1 instead of waiting for the whole video.
+   */
+  onBatch?: (
+    translatedSoFar: Segment[],
+    batchNo: number,
+    batchCount: number,
+  ) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
-function sendTranslateBatch(
+async function translateSegmentsInProcess(
+  segments: Segment[],
+  targetLanguage: string,
+  settings: unknown,
+): Promise<Segment[]> {
+  const client = createTranslationClient(settings as Partial<UserSettings> | undefined);
+  return client.translateSegments(segments, { targetLanguage });
+}
+
+async function sendTranslateBatch(
   segments: Segment[],
   targetLanguage: string,
   settings: unknown,
   batchTimeoutMs: number
 ): Promise<Segment[]> {
-  return new Promise<Segment[]>((resolve, reject) => {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      return reject(new Error('chrome.runtime.sendMessage unavailable'));
-    }
-
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        reject(new Error(`Translation request timed out after ${batchTimeoutMs / 1000}s`));
-      }
-    }, batchTimeoutMs);
-
-    chrome.runtime.sendMessage(
+  try {
+    const res = await sendExtensionMessage<{ success?: boolean; segments?: Segment[]; error?: string }>(
       {
         action: 'TRANSLATE_SEGMENTS',
         segments,
         targetLanguage,
         settings,
       },
-      (res: any) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-
-        if (chrome.runtime?.lastError) {
-          return reject(new Error(chrome.runtime.lastError.message));
-        }
-        if (!res || !res.success) {
-          return reject(new Error(res?.error || 'Translation failed in background'));
-        }
-        resolve(res.segments as Segment[]);
-      }
+      batchTimeoutMs,
     );
-  });
+    if (!res?.success || !res.segments) {
+      throw new Error(res?.error || 'Translation failed in background');
+    }
+    return res.segments;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/unavailable|Receiving end does not exist|Extension context invalidated/i.test(message)) {
+      throw err;
+    }
+    console.warn('[AetherDub] Background messaging failed; translating in content script:', message);
+    return translateSegmentsInProcess(segments, targetLanguage, settings);
+  }
 }
 
 /**
  * Delegate translation to Background Service Worker via message passing
  * to bypass host page CSP & CORS restrictions.
  *
- * Sends segments in sequential batches (default 25/message) instead of one
+ * Sends segments in sequential batches (default 15/message) instead of one
  * giant request: a full transcript in a single message can exceed the
- * 30s round-trip (slow proxy/model), which previously surfaced as
+ * 90s round-trip (slow proxy/model), which previously surfaced as
  * "Translation request timed out after 30s" with no partial progress.
  */
+function mergeTranslatedOntoOriginal(original: Segment[], translated: Segment[]): Segment[] {
+  const byId = new Map(translated.map((segment) => [segment.id, segment]));
+  return original.map((segment) => {
+    const hit = byId.get(segment.id);
+    return hit ? { ...segment, ...hit } : segment;
+  });
+}
+
 export async function translateViaBackground(
   transcript: Transcript,
   targetLanguage: string,
@@ -472,22 +517,105 @@ export async function translateViaBackground(
   const batchSize = Math.max(1, options.batchSize ?? TRANSLATE_BATCH_SIZE);
   const batchTimeoutMs = options.batchTimeoutMs ?? TRANSLATE_BATCH_TIMEOUT_MS;
   const segments = transcript.segments;
-
-  if (segments.length <= batchSize) {
-    const translated = await sendTranslateBatch(segments, targetLanguage, settings, batchTimeoutMs);
-    return { ...transcript, targetLanguage, segments: translated };
-  }
-
   const translated: Segment[] = [];
-  const batchCount = Math.ceil(segments.length / batchSize);
+  const batchCount = Math.max(1, Math.ceil(segments.length / batchSize));
+  let lastError: unknown;
+
   for (let i = 0; i < segments.length; i += batchSize) {
+    if (options.signal?.aborted) {
+      break;
+    }
     const batch = segments.slice(i, i + batchSize);
     const batchNo = Math.floor(i / batchSize) + 1;
     console.log(`[AetherDub] Translating batch ${batchNo}/${batchCount} (${batch.length} segments)`);
-    const done = await sendTranslateBatch(batch, targetLanguage, settings, batchTimeoutMs);
-    translated.push(...done);
+    try {
+      const done = await sendTranslateBatch(batch, targetLanguage, settings, batchTimeoutMs);
+      translated.push(...done);
+      const soFar = mergeTranslatedOntoOriginal(segments, translated);
+      await options.onBatch?.(soFar, batchNo, batchCount);
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `[AetherDub] Translation batch ${batchNo}/${batchCount} failed; keeping ${translated.length} translated segment(s):`,
+        err,
+      );
+    }
   }
-  return { ...transcript, targetLanguage, segments: translated };
+
+  if (translated.length === 0) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Translation failed in background');
+  }
+
+  return {
+    ...transcript,
+    targetLanguage,
+    segments: mergeTranslatedOntoOriginal(segments, translated),
+  };
+}
+
+/**
+ * Whisper STT fallback (Groq BYOK) used only after caption fetch failed.
+ * Requires an unsigned audio URL in playerResponse.streamingData.
+ */
+export async function tryWhisperTranscriptFallback(
+  videoId: string,
+  playerResponse?: unknown,
+): Promise<Transcript | null> {
+  const settings = await getSettings().catch(() => null);
+  const groqApiKey = settings?.groqApiKey?.trim();
+  if (!groqApiKey) {
+    console.warn('[AetherDub] Whisper fallback skipped: no Groq API key');
+    return null;
+  }
+
+  let pr = playerResponse;
+  if (!pr) {
+    pr = await getPlayerResponse(videoId);
+  }
+  const audioUrl = extractUnsignedAudioUrl(pr);
+  if (!audioUrl) {
+    console.warn('[AetherDub] Whisper fallback skipped: no unsigned audio URL (ciphered or missing)');
+    return null;
+  }
+
+  try {
+    const segments = await transcribeAudioViaBackground(audioUrl, groqApiKey);
+    if (!segments.length) return null;
+    console.log(`[AetherDub] Whisper fallback produced ${segments.length} segments`);
+    return {
+      videoId,
+      sourceLanguage: 'und',
+      segments,
+      isAutoGenerated: true,
+    };
+  } catch (err) {
+    console.warn('[AetherDub] Whisper fallback failed:', err);
+    return null;
+  }
+}
+
+function transcribeAudioViaBackground(audioUrl: string, groqApiKey: string): Promise<Segment[]> {
+  return sendExtensionMessage<{ success?: boolean; segments?: Segment[]; error?: string }>(
+    { action: 'TRANSCRIBE_AUDIO', audioUrl, groqApiKey },
+    120_000,
+  ).then((res) => {
+    if (!res?.success || !res.segments) {
+      throw new Error(res?.error || 'Whisper transcription failed');
+    }
+    return res.segments;
+  });
+}
+
+/** @internal Test seam — transcribe a blob with Groq without the background worker. */
+export async function transcribeBlobWithGroq(
+  audio: Blob,
+  apiKey: string,
+  fetchFn?: typeof fetch,
+): Promise<Segment[]> {
+  const client = new GroqWhisperClient({ apiKey, fetchFn });
+  return client.transcribeBlob(audio);
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
@@ -504,7 +632,10 @@ export function stopDubbingPipeline(): void {
     state.orchestrator.destroy();
     state.orchestrator = null;
   }
+  state.translationAbort?.abort();
+  state.translationAbort = null;
   state.activeVideoId = null;
+  state.activeTargetLanguage = null;
 }
 
 /**
@@ -518,7 +649,8 @@ export function stopDubbingPipeline(): void {
  */
 export async function startDubbingPipeline(
   instance: HudInstance,
-  targetVideoElement?: HTMLVideoElement
+  targetVideoElement?: HTMLVideoElement,
+  requestedTargetLanguage: string = 'vi',
 ): Promise<DubbingOrchestratorImpl | null> {
   const videoId = extractVideoId();
   if (!videoId) {
@@ -534,8 +666,14 @@ export async function startDubbingPipeline(
     return null;
   }
 
-  // Already initialized for this video — reuse the running orchestrator
-  if (state.activeVideoId === videoId && state.orchestrator) {
+  const targetLanguage = requestedTargetLanguage.trim() || 'vi';
+
+  // Already initialized for this video + language — reuse the running orchestrator
+  if (
+    state.activeVideoId === videoId &&
+    state.activeTargetLanguage === targetLanguage &&
+    state.orchestrator
+  ) {
     instance.updateOrchestrator?.(state.orchestrator);
     return state.orchestrator;
   }
@@ -568,21 +706,24 @@ export async function startDubbingPipeline(
 
   try {
     // Sync the cockpit Engine badge with the configured translation provider.
+    let settings: UserSettings | null = null;
     try {
-      const settings = await getSettings();
+      settings = await getSettings();
       instance.updateProps?.({ engineLabel: resolveEngineLabel(settings) });
     } catch {
       // Non-fatal: HUD keeps its default badge.
     }
+    const translationProvider = settings?.translationProvider ?? 'gemini';
 
     const fetcher = new TranscriptFetcher();
     const cache = new SegmentCache();
-    const targetLanguage = 'vi';
 
     // ── 0. Cache-first: a fully translated transcript needs ZERO timedtext
     // requests and ZERO translation tokens. Previously the raw captions were
     // fetched on every page load even for cached videos — pure throttle fuel.
-    let translatedTranscript = await cache.getTranscript(videoId, targetLanguage).catch(() => null);
+    let translatedTranscript = await cache
+      .getTranscript(videoId, targetLanguage, translationProvider)
+      .catch(() => null);
     if (translatedTranscript && translatedTranscript.segments.length > 0) {
       if (translatedTranscript.segments.some((s) => s.duration > 15)) {
         console.log('[AetherDub] Invalidating stale cached transcript with oversized segments (>15s)');
@@ -606,10 +747,15 @@ export async function startDubbingPipeline(
         const potCount = audioTracks.filter(trackHasPot).length;
         console.log(`[AetherDub] Using ${audioTracks.length} audio track URL(s) from bridge (${potCount} with pot)`);
         if (potCount === 0) {
-          console.warn('[AetherDub] Bridge tracks carry no POT yet — fetch will likely return empty bodies (exp=xpe gate)');
+          console.warn('[AetherDub] Bridge tracks carry no POT yet — waiting extra for mint, skipping static playerResponse fallback');
+          const extra = await waitForAudioCaptionTracks(videoId, 4000);
+          captionTracks = extra.length > 0 ? extra : audioTracks;
+        } else {
+          captionTracks = audioTracks;
         }
-        captionTracks = audioTracks;
-      } else {
+      }
+
+      if (!captionTracks?.some(trackHasPot) && !shouldSkipStaticPlayerResponseFallback(captionTracks ?? [])) {
         console.warn('[AetherDub] Audio track bridge timeout — falling back to playerResponse');
         playerResponse = await getPlayerResponse(videoId);
         console.log('[AetherDub] Player response found:', !!playerResponse,
@@ -617,26 +763,89 @@ export async function startDubbingPipeline(
             playerResponse?.playerCaptionsTracklistRenderer?.captionTracks));
       }
 
-      // ── 2. Fetch transcript ───────────────────────────────────────────────
-      let rawTranscript: Transcript;
+      const preferredLang = getActiveCaptionState().activeLanguageCode || 'en';
+
+      if (translationProvider === YOUTUBE_CAPTION_TRANSLATION) {
+        try {
+          translatedTranscript = await fetcher.fetchYoutubeCaptionTranslation(videoId, {
+            playerResponse,
+            captionTracks,
+            preferredLang,
+            targetLanguage,
+          });
+          if (!translatedTranscript.segments.length) {
+            translatedTranscript = null;
+            throw new Error(`Empty caption response received for video ${videoId}`);
+          }
+          try {
+            await cache.saveTranscript(translatedTranscript, translationProvider);
+          } catch (cacheErr) {
+            console.warn('[AetherDub] Failed to cache YouTube Caption Translation transcript:', cacheErr);
+          }
+        } catch (err: unknown) {
+          if (isThrottleError(err)) {
+            markVideoThrottled(videoId);
+            console.warn(
+              `[AetherDub] Timedtext throttled (HTTP 429) for video ${videoId} — cooling down for ${TIMEDTEXT_THROTTLE_COOLDOWN_MS / 60000} min.`,
+            );
+          } else {
+            console.warn('[AetherDub] YouTube Caption Translation failed:', err);
+          }
+
+          const allowWhisper =
+            !isYoutubeTranslationOnlyFailure(err) &&
+            !isThrottleError(err);
+
+          if (allowWhisper) {
+            await tryWhisperTranscriptFallback(videoId, playerResponse);
+          }
+
+          instance.updateProps?.({ hasCaptions: false, isNoCaptions: true });
+          return null;
+        }
+      }
+
+      // ── 2. Fetch transcript (LLM providers only) ─────────────────────────
+      let rawTranscript: Transcript | null = null;
+      if (!translatedTranscript) {
       try {
         rawTranscript = await fetcher.fetchTranscript(videoId, {
           playerResponse,
           captionTracks,
-          preferredLang: 'en',
+          preferredLang,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (isThrottleError(err)) {
           markVideoThrottled(videoId);
           console.warn(
             `[AetherDub] Timedtext throttled (HTTP 429) for video ${videoId} — cooling down for ${TIMEDTEXT_THROTTLE_COOLDOWN_MS / 60000} min. ` +
               `Further attempts will be skipped until then.`
           );
+        } else if (isPotTokenError(err) || getActiveCaptionState().ccEvidence) {
+          console.warn('[AetherDub] Caption fetch failed with POT/CC evidence — retrying POT mint:', err);
+          const retryTracks = await waitForAudioCaptionTracks(videoId, 4000);
+          if (retryTracks.some(trackHasPot)) {
+            try {
+              rawTranscript = await fetcher.fetchTranscript(videoId, {
+                captionTracks: retryTracks,
+                preferredLang,
+              });
+            } catch (retryErr: unknown) {
+              console.warn('[AetherDub] POT retry failed:', retryErr);
+            }
+          }
         } else {
-          console.warn('[AetherDub] No captions available:', err?.message || err);
+          console.warn('[AetherDub] No captions available:', err);
         }
-        instance.updateProps?.({ hasCaptions: false, isNoCaptions: true });
-        return null;
+
+        if (!rawTranscript) {
+          rawTranscript = await tryWhisperTranscriptFallback(videoId, playerResponse);
+        }
+
+        if (!rawTranscript) {
+          instance.updateProps?.({ hasCaptions: false, isNoCaptions: true });
+          return null;
+        }
       }
 
       if (!rawTranscript || rawTranscript.segments.length === 0) {
@@ -645,17 +854,139 @@ export async function startDubbingPipeline(
         return null;
       }
 
-      // ── 3. Translate + cache ──────────────────────────────────────────────
+      const sourceTranscript: Transcript = rawTranscript;
+
+      // ── 3. Translate (stream first batch so TTS can start) + cache when complete
       console.log('[AetherDub] Translating transcript to', targetLanguage);
-      translatedTranscript = await translateViaBackground(rawTranscript, targetLanguage);
-      try {
-        await cache.saveTranscript(translatedTranscript);
-      } catch (cacheErr) {
-        console.warn('[AetherDub] Failed to cache transcript in IndexedDB:', cacheErr);
+      state.translationAbort?.abort();
+      state.translationAbort = new AbortController();
+      const translationSignal = state.translationAbort.signal;
+
+      const ttsClient = new BackgroundDubbingTtsClient();
+      const orchestrator = new DubbingOrchestratorImpl(video, {
+        ttsClient,
+        defaultVoice: 'vi-VN-HoaiMyNeural',
+        femaleVoice: 'vi-VN-HoaiMyNeural',
+        maleVoice: 'vi-VN-NamMinhNeural',
+        diarizationEnabled: false,
+      });
+
+      let playbackReleased = false;
+      const releasePlayback = async (partial: Transcript): Promise<void> => {
+        if (translationSignal.aborted) return;
+        if (playbackReleased) {
+          orchestrator.mergeTranslatedSegments(partial.segments);
+          orchestrator.handleTimeUpdate(video.currentTime);
+          return;
+        }
+        playbackReleased = true;
+        await orchestrator.init(videoId, partial, {
+          targetLanguage,
+          duckLevel: 0.2,
+          lookaheadSeconds: 60,
+          diarizationEnabled: false,
+        });
+        if (orchestrator.primeInitialLookahead) {
+          try {
+            await orchestrator.primeInitialLookahead(video.currentTime);
+          } catch (primeErr) {
+            console.warn('[AetherDub] Lookahead priming warning:', primeErr);
+          }
+        }
+        state.orchestrator = orchestrator;
+        state.activeTargetLanguage = targetLanguage;
+        instance.updateOrchestrator?.(orchestrator);
+        instance.updateProps?.({ hasCaptions: true, isNoCaptions: false });
+
+        const onTimeUpdate = () => orchestrator.handleTimeUpdate(video.currentTime);
+        const onSeek = () => orchestrator.handleSeek(video.currentTime);
+        const onPlay = () => orchestrator.handlePlay();
+        const onPause = () => orchestrator.handlePause();
+        const onRateChange = () => orchestrator.handleRateChange(video.playbackRate);
+
+        video.addEventListener('timeupdate', onTimeUpdate);
+        video.addEventListener('seeking', onSeek);
+        video.addEventListener('seeked', onSeek);
+        video.addEventListener('play', onPlay);
+        video.addEventListener('pause', onPause);
+        video.addEventListener('ratechange', onRateChange);
+
+        state.cleanupListeners = () => {
+          video.removeEventListener('timeupdate', onTimeUpdate);
+          video.removeEventListener('seeking', onSeek);
+          video.removeEventListener('seeked', onSeek);
+          video.removeEventListener('play', onPlay);
+          video.removeEventListener('pause', onPause);
+          video.removeEventListener('ratechange', onRateChange);
+        };
+
+        if (!video.paused) {
+          orchestrator.handlePlay();
+          orchestrator.handleTimeUpdate(video.currentTime);
+        }
+        console.log('[AetherDub] Dubbing pipeline initialized after first translated batch for', videoId);
+      };
+
+      let settleFirst: (value: DubbingOrchestratorImpl | null) => void;
+      let firstSettled = false;
+      const firstBatchReady = new Promise<DubbingOrchestratorImpl | null>((resolve) => {
+        settleFirst = resolve;
+      });
+      const settleFirstOnce = (value: DubbingOrchestratorImpl | null) => {
+        if (firstSettled) return;
+        firstSettled = true;
+        settleFirst(value);
+      };
+
+      void translateViaBackground(sourceTranscript, targetLanguage, {
+        signal: translationSignal,
+        onBatch: async (soFar) => {
+          const partial: Transcript = {
+            ...sourceTranscript,
+            targetLanguage,
+            segments: soFar,
+          };
+          await releasePlayback(partial);
+          settleFirstOnce(orchestrator);
+        },
+      })
+        .then(async (full) => {
+          translatedTranscript = full;
+          const complete = full.segments.every((segment) => Boolean(segment.translatedText));
+          if (complete) {
+            try {
+              await cache.saveTranscript(full, translationProvider);
+            } catch (cacheErr) {
+              console.warn('[AetherDub] Failed to cache transcript in IndexedDB:', cacheErr);
+            }
+          } else {
+            console.warn(
+              '[AetherDub] Translation finished with gaps; not caching incomplete transcript',
+            );
+          }
+          if (!playbackReleased) {
+            await releasePlayback(full);
+          } else {
+            orchestrator.mergeTranslatedSegments(full.segments);
+            orchestrator.handleTimeUpdate(video.currentTime);
+          }
+          settleFirstOnce(state.orchestrator);
+        })
+        .catch((err) => {
+          console.error('[AetherDub] Translation stream failed:', err);
+          settleFirstOnce(state.orchestrator);
+        });
+
+      const ready = await firstBatchReady;
+      if (!ready) {
+        instance.updateProps?.({ hasCaptions: false, isNoCaptions: true });
+        return null;
+      }
+      return ready;
       }
     }
 
-    // ── 4. Initialize DubbingOrchestrator ────────────────────────────────
+    // ── Cache-hit path: initialize immediately ────────────────────────────
     const ttsClient = new BackgroundDubbingTtsClient();
     const orchestrator = new DubbingOrchestratorImpl(video, {
       ttsClient,
@@ -672,7 +1003,6 @@ export async function startDubbingPipeline(
       diarizationEnabled: false,
     });
 
-    // ── 4b. Prime initial lookahead audio (ADR-0008) ──────────────────────
     if (orchestrator.primeInitialLookahead) {
       try {
         await orchestrator.primeInitialLookahead(video.currentTime);
@@ -682,12 +1012,11 @@ export async function startDubbingPipeline(
     }
 
     state.orchestrator = orchestrator;
+    state.activeTargetLanguage = targetLanguage;
 
-    // ── 5. Update HUD ─────────────────────────────────────────────────────
     instance.updateOrchestrator?.(orchestrator);
     instance.updateProps?.({ hasCaptions: true, isNoCaptions: false });
 
-    // ── 6. Bind video events ──────────────────────────────────────────────
     const onTimeUpdate = () => orchestrator.handleTimeUpdate(video.currentTime);
     const onSeek = () => orchestrator.handleSeek(video.currentTime);
     const onPlay = () => orchestrator.handlePlay();
@@ -764,6 +1093,7 @@ export async function activateDubbing(
   videoId?: string,
   /** @internal Injectable for testing only — defaults to startDubbingPipeline */
   _pipelineFn?: typeof startDubbingPipeline,
+  requestedTargetLanguage: string = 'vi',
 ): Promise<ActivationResult> {
   const pipelineFn = _pipelineFn ?? startDubbingPipeline;
   const vid = videoId ?? extractVideoId();
@@ -772,11 +1102,15 @@ export async function activateDubbing(
     return 'error';
   }
 
-  const targetLanguage = 'vi';
+  const targetLanguage = requestedTargetLanguage.trim() || 'vi';
   const cache = new SegmentCache();
 
   // ── 0. Cache fast-path ─────────────────────────────────────────────────────
-  const cachedTranscript = await cache.getTranscript(vid, targetLanguage).catch(() => null);
+  const settings = await getSettings().catch(() => null);
+  const translationProvider = settings?.translationProvider ?? 'gemini';
+  const cachedTranscript = await cache
+    .getTranscript(vid, targetLanguage, translationProvider)
+    .catch(() => null);
   const cacheHit = !!(cachedTranscript && cachedTranscript.segments.length > 0);
 
   if (cacheHit) {
@@ -828,7 +1162,7 @@ export async function activateDubbing(
       return 'cancelled';
     }
 
-    const orchestrator = await pipelineFn(instance, video);
+    const orchestrator = await pipelineFn(instance, video, targetLanguage);
 
     if (signal.aborted) {
       clearTimeout(watchdogId);
@@ -914,6 +1248,8 @@ async function _initOrchestrator(
     lookaheadSeconds: 60,
     diarizationEnabled: false,
   });
+  state.activeVideoId = videoId;
+  state.activeTargetLanguage = targetLanguage;
 
   if (orchestrator.primeInitialLookahead) {
     try {

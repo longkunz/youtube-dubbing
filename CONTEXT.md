@@ -36,8 +36,16 @@ _Avoid_: Buffer queue, rolling cache, prefetch span
 The process of consolidating fragmented auto-caption snippets into coherent sentences with proper punctuation and preserved timeline boundaries.
 _Avoid_: Subtitle joining, caption cleaning, text stitching
 
+**Caption Track**:
+A YouTube-provided timed text stream for a video in one language, before Sentence Restructuring.
+_Avoid_: CC track, closed captions, timedtext, subtitle file
+
+**YouTube Caption Translation**:
+Obtaining translated Segment text from YouTube: an existing Caption Track in the target language, or YouTube's machine translation of a translatable source Caption Track. Not an LLM and not speaker diarization.
+_Avoid_: tlang, auto-translate, Google Translate, YouTube CC translate
+
 **Segment Cache**:
-Persistent IndexedDB storage of translated text and synthesized audio blobs keyed by video, target language, and voice profile.
+Persistent IndexedDB storage of translated text and synthesized audio blobs keyed by video, target language, Translation Provider, and voice profile.
 _Avoid_: Local database, audio storage, response cache
 
 **Playback Sync Engine**:
@@ -53,8 +61,8 @@ A specific speech synthesis configuration defined by locale, gender, pitch, rate
 _Avoid_: Speaker preset, narrator option, voice persona
 
 **Translation Provider**:
-An external LLM backend service or gateway (e.g., OpenAI-Compatible Proxy, Google Gemini) executing batch translation of dialogue segments with conversational speaker diarization.
-_Avoid_: Translation API, LLM wrapper, model server
+The user-selected source of translated Segment text: an LLM backend (Google Gemini or an OpenAI-Compatible Endpoint) or YouTube Caption Translation. Chosen in Command Center; not switched automatically.
+_Avoid_: Translation API, LLM wrapper, model server, auto-translate toggle
 
 **OpenAI-Compatible Endpoint**:
 A REST API gateway conforming to the standard `/v1/chat/completions` specification, accepting customizable base URLs, model identifiers, and optional bearer tokens.
@@ -71,5 +79,9 @@ _Avoid_: Center spinner, loading modal, buffering popup, wait screen
 **Split Pill Control**:
 A dual-action control surface on the YouTube player toolbar combining a direct Dub Track toggle action with a dedicated settings expander for the Cyber Cockpit.
 _Avoid_: Double button, toggle pill, combined widget
+
+**Whisper Fallback**:
+Groq Whisper speech-to-text used only after YouTube caption fetch fails, requiring a user Groq API key and an unsigned audio URL from the player response.
+_Avoid_: Always-on STT, tab capture, YouTube-dl, automatic transcription on every video
 
 

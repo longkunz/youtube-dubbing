@@ -3,6 +3,7 @@ import { createRoot, Root } from 'react-dom/client';
 import { HudContainer, type HudContainerProps } from '@/components/HudContainer';
 import { HUD_STYLES } from '@/styles/hud.styles';
 import type { DubbingOrchestrator } from '@/types/domain';
+import { getSettings, saveSettings } from '@/storage/settings';
 import {
   activateDubbing,
   deactivateDubbing,
@@ -87,19 +88,32 @@ export function mountHud(
     },
   };
 
-  const handleActivateDubbing = () => {
+  const handleActivateDubbing = (targetLanguage: string) => {
     const video = resolveVideo();
     if (!video) return;
 
+    currentProps = { ...currentProps, targetLanguage };
     // Cancel any in-flight activation
     activationController?.abort();
     activationController = new AbortController();
     const signal = activationController.signal;
 
-    // Lazy self-reference for the instance
-    activateDubbing(video, instance, hudCallbacks, signal).catch((err) => {
+    activateDubbing(
+      video,
+      instance,
+      hudCallbacks,
+      signal,
+      undefined,
+      undefined,
+      targetLanguage,
+    ).catch((err) => {
       console.error('[AetherDub] activateDubbing threw unexpectedly:', err);
     });
+  };
+
+  const handleTargetLanguageChange = (languageCode: string) => {
+    currentProps = { ...currentProps, targetLanguage: languageCode };
+    saveSettings({ targetLanguage: languageCode }).catch(() => {});
   };
 
   const handleDeactivateDubbing = () => {
@@ -123,6 +137,7 @@ export function mountHud(
           orchestrator={currentOrchestrator}
           {...currentProps}
           onActivateDubbing={handleActivateDubbing}
+          onTargetLanguageChange={handleTargetLanguageChange}
           onDeactivateDubbing={handleDeactivateDubbing}
           onCancelPreparation={handleDeactivateDubbing}
           onResumePlayback={handleResumePlayback}
@@ -168,6 +183,15 @@ export function mountHud(
   };
 
   (hostEl as any).__aetherdub_instance = instance;
+
+  getSettings()
+    .then((settings) => {
+      if (!mounted) return;
+      if (settings.targetLanguage && !currentProps.targetLanguage) {
+        instance.updateProps?.({ targetLanguage: settings.targetLanguage });
+      }
+    })
+    .catch(() => {});
 
   return instance;
 }

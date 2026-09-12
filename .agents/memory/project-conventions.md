@@ -12,7 +12,7 @@ updated: 2026-09-09
 
 ## Tech Stack
 - Web Extension: WXT (Manifest V3) + React + TypeScript + TailwindCSS
-- Primary AI Translation: Google Gemini 1.5 / 2.0 Flash (BYOK - Bring Your Own Key)
+- Primary AI Translation: configurable Gemini Flash (default `gemini-3.8-flash`, BYOK) plus OpenAI-compatible proxies
 - Speech Synthesis: Microsoft Edge Neural TTS (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) via Background Service Worker WebSocket
 - Persistent Cache: Browser IndexedDB (`idb` repository)
 

@@ -231,7 +231,7 @@ describe('Web Speech Fallback & Resilience (Issue #8)', () => {
       );
 
       expect(
-        screen.getByText(/No captions found for this video\. Add a Groq\/OpenAI API key in Settings to activate Whisper STT\./i)
+        screen.getByText(/No captions could be downloaded for this video/i)
       ).toBeInTheDocument();
 
       const configBtn = screen.getByRole('button', { name: /configure settings/i });
@@ -275,7 +275,7 @@ describe('Web Speech Fallback & Resilience (Issue #8)', () => {
       );
 
       expect(
-        screen.getByText(/No captions found for this video\. Add a Groq\/OpenAI API key in Settings to activate Whisper STT\./i)
+        screen.getByText(/No captions could be downloaded for this video/i)
       ).toBeInTheDocument();
 
       // Dismiss the banner
@@ -283,13 +283,13 @@ describe('Web Speech Fallback & Resilience (Issue #8)', () => {
       fireEvent.click(dismissBtn);
 
       expect(
-        screen.queryByText(/No captions found for this video/i)
+        screen.queryByText(/No captions could be downloaded for this video/i)
       ).not.toBeInTheDocument();
 
       // Rerender with hasCaptions = true -> no banner
       rerender(React.createElement(HudContainer, { hasCaptions: true }));
       expect(
-        screen.queryByText(/No captions found for this video/i)
+        screen.queryByText(/No captions could be downloaded for this video/i)
       ).not.toBeInTheDocument();
     });
   });

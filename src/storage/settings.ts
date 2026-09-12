@@ -18,14 +18,26 @@ export const GEMINI_MODEL_PRESETS = [
   'gemini-2.5-flash',
 ] as const;
 
+/** 404 fallback chain after the user-selected Gemini model. */
+export const GEMINI_FALLBACK_MODELS = [
+  ...GEMINI_MODEL_PRESETS,
+  'gemini-flash-latest',
+] as const;
+
+export type TranslationProvider = 'gemini' | 'openai-compatible' | 'youtube-caption-translation';
+
+export const YOUTUBE_CAPTION_TRANSLATION = 'youtube-caption-translation' as const;
+
 export interface UserSettings {
-  translationProvider: 'gemini' | 'openai-compatible';
+  translationProvider: TranslationProvider;
   geminiApiKey: string;
   geminiModel: string;
   openaiEndpoint: string;
   openaiModel: string;
   openaiApiKey: string;
   groqApiKey: string;
+  /** BCP-47 target language for the Dub Track (cockpit selector). */
+  targetLanguage: string;
   ttsPitch?: string;
   ttsRate?: string;
   ttsProvider: 'edge-tts' | 'web-speech';
@@ -40,6 +52,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   openaiModel: 'gpt-4o-mini',
   openaiApiKey: '',
   groqApiKey: '',
+  targetLanguage: 'vi',
   ttsPitch: '+0Hz',
   ttsRate: '+0%',
   ttsProvider: 'edge-tts',
@@ -248,6 +261,8 @@ export async function pingOpenAiConnection(
         messages: [{ role: 'user', content: 'Ping' }],
         max_tokens: 5,
         stream: false,
+        reasoning_effort: 'none',
+        reasoning: { effort: 'none' },
       }),
     });
 

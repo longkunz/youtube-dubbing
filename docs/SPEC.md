@@ -8,14 +8,14 @@ Users consuming foreign-language content on YouTube (e.g. English, Japanese, Kor
 
 ## Solution
 
-A high-performance, 100% client-side Chrome/Web extension (built with WXT, React, TypeScript, and TailwindCSS) that translates and dubs YouTube videos into natural, fluent Vietnamese and other target languages in real time. The extension uses Bring Your Own Key (BYOK) for LLM translation (`gemini-2.0-flash`) and leverages Microsoft Edge Neural TTS for free, expressive, high-fidelity voices (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`). It provides smooth Audio Ducking to keep background audio intact, dynamic Time Stretching to fit timeline segments, a `SegmentCache` (IndexedDB via `idb`) for zero-latency replay, and an eye-catching Hyper Sci-Fi Audio HUD embedded via Shadow DOM alongside gentle, distraction-free YouTube-style captions.
+A high-performance, 100% client-side Chrome/Web extension (built with WXT, React, TypeScript, and TailwindCSS) that translates and dubs YouTube videos into natural, fluent Vietnamese and other target languages in real time. The extension uses Bring Your Own Key (BYOK) for LLM translation (configurable Gemini Flash model, default `gemini-3.8-flash`, plus OpenAI-compatible proxies) or optional **YouTube Caption Translation** (existing target-language Caption Track or YouTube machine translation of a translatable source track, no LLM key). It leverages Microsoft Edge Neural TTS for free, expressive, high-fidelity voices (`vi-VN-HoaiMyNeural` & `vi-VN-NamMinhNeural`). Dubbing stays dormant until On-Demand Activation. It provides smooth Audio Ducking to keep background audio intact, dynamic Time Stretching to fit timeline segments, a `SegmentCache` (IndexedDB via `idb`) for zero-latency replay, and an eye-catching Hyper Sci-Fi Audio HUD embedded via Shadow DOM alongside gentle, distraction-free YouTube-style captions.
 
 ## User Stories
 
 1. As a viewer, I want to toggle AI dubbing on and off directly from a floating HUD pill on the YouTube player, so that I can switch between original audio and the Dub Track without navigating away.
 2. As a viewer, I want the extension to automatically extract YouTube's auto-generated or manual captions, so that dubbing starts instantly without needing to download heavy raw video/audio files.
 3. As a viewer, I want fragmented caption segments to be restructured into grammatically coherent sentences before translation, so that the translated dialogue sounds natural and avoids awkward pauses.
-4. As a viewer, I want the entire transcript to be translated upfront using `gemini-2.0-flash` upon video load, so that pronouns and contextual terminology remain consistent across the entire video.
+4. As a viewer, I want the entire transcript to be translated upfront using the configured Gemini Flash model (default `gemini-3.8-flash`) when I turn dubbing ON, so that pronouns and contextual terminology remain consistent across the entire video without spending tokens on videos I watch in the original language.
 5. As a viewer, I want speech synthesis (TTS) to be generated on-demand using a 30–60 second sliding window, so that network bandwidth and TTS quotas are not wasted if I abandon the video early.
 6. As a viewer, I want the original video audio to smoothly duck (attenuate to ~20%) over 150ms when the Dub Track speaks and fade back up when silent, so that I can clearly hear the translation while still enjoying background music and sound effects.
 7. As a viewer, I want the synthesized speech speed to dynamically scale (Time Stretching 1.0x–1.35x) to fit the original spoken duration, so that dialogue stays synchronized with speaker lip movements and scene transitions.
@@ -23,7 +23,7 @@ A high-performance, 100% client-side Chrome/Web extension (built with WXT, React
 9. As a viewer, I want Dub Track playback to immediately cease and re-align when I seek (scrub) forward or backward on the timeline, so that I do not hear mismatched stale audio.
 10. As a viewer, I want Dub Track playback speed to automatically adapt when I change YouTube playback speed (e.g. 1.25x, 1.5x, 2.0x), so that dubbing stays in lockstep with fast-forwarded video.
 11. As a viewer, I want to choose between expressive female (`Hoài My`) and studio male (`Nam Minh`) voice profiles from a quick cockpit panel, so that I can personalize the narration style.
-12. As a viewer, I want to select my target language (default: `Tiếng Việt [vi]`, with options for `English [en]`, `日本語 [ja]`, `中文 [zh]`, `Español [es]`) from the Cyber Cockpit, so that I can dub videos into my preferred language.
+12. As a viewer, I want to select my target language (default: `Tiếng Việt [vi]`, with options for `English [en]`, `日本語 [ja]`, `中文 [zh]`, `Español [es]`) from the Cyber Cockpit, so that cache lookup, translation, and Dub Track synthesis all use that language.
 13. As a viewer, I want an optional Multi-Speaker auto-detection mode that uses LLM speaker diarization tags to automatically alternate between male and female voices based on dialogue context, so that conversational videos and interviews feel immersive.
 14. As a viewer, I want translated subtitles to appear on-screen in a gentle, native YouTube-like aesthetic (`rgba(8, 8, 8, 0.84)` rounded black pill with crisp white text), so that reading remains comfortable without eye strain or neon distractions.
 15. As a viewer, I want an optional secondary preview line displaying the original foreign-language caption (13px soft gray text) directly beneath the translated subtitle, so that I can compare translations or learn language.
@@ -31,9 +31,14 @@ A high-performance, 100% client-side Chrome/Web extension (built with WXT, React
 17. As a user, I want a Command Center settings page to securely enter and validate my Google Gemini API Key and optional Groq/OpenAI STT keys, so that I control my own credentials with complete privacy.
 18. As a user, I want a connection test button ("Ping Connection") on the settings page, so that I can verify my API key validity and network latency immediately.
 19. As a user, I want a cache management panel displaying stored videos and disk usage with a one-click "Purge Cache" button, so that I can reclaim local disk space whenever needed.
-20. As a viewer, I want a clear, friendly notification if a video has no available captions, suggesting adding a Groq/OpenAI key to activate automatic Whisper STT, so that I understand why dubbing cannot proceed.
+20. As a viewer, I want a clear, friendly notification if captions cannot be downloaded, and if I have added a Groq API key I want Whisper Fallback to attempt transcription from an unsigned player audio URL, so that dubbing can still proceed when timedtext fails.
 21. As a viewer, I want Edge-TTS WebSocket disconnects to automatically retry up to 3 times with exponential backoff and fall back gracefully to Web Speech API, so that audio playback is never permanently broken by temporary network hiccups.
 22. As a user, I want all in-player UI components to be isolated within a Shadow DOM, so that YouTube's internal stylesheet changes never break the extension UI and extension styles never pollute the video page.
+23. As a viewer, I want to select YouTube Caption Translation in Command Center as a peer Translation Provider (default remains Gemini), so that I can dub without LLM tokens or a Gemini API key.
+24. As a viewer using YouTube Caption Translation, I want an existing target-language Caption Track used when available, otherwise YouTube machine translation of a translatable source Caption Track, so that the cheap path still produces a Dub Track.
+25. As a viewer using YouTube Caption Translation, I want Sentence Restructuring, original-language preview (dual-fetch aligned by time), On-Demand Activation, and Sliding Window TTS to keep working, so that only the translation source changes.
+26. As a viewer, I want Segment Cache keys to include Translation Provider, so that Gemini and YouTube Caption Translation never overwrite each other.
+27. As a viewer, if YouTube Caption Translation cannot obtain translated cues, I want a clear failure and no silent LLM fallback, so that I do not spend tokens I did not request.
 
 ## Implementation Decisions
 
@@ -46,7 +51,7 @@ src/
 ├── core/
 │   ├── orchestrator/          # DubbingOrchestrator: Highest seam coordinating the pipeline
 │   ├── transcript/            # TranscriptFetcher & SentenceMerger (gap < 0.4s heuristic)
-│   ├── translation/           # GeminiTranslationClient (batch translation with gemini-2.0-flash)
+│   ├── translation/           # GeminiTranslationClient + OpenAI-compatible factory (configurable Flash model)
 │   ├── tts/                   # EdgeTtsClient (WebSocket transport, SSML pitch/rate, chunk assembly)
 │   └── player/                # DubPlayer: SyncEngine, AudioDucker (lerp volume), TimeStretcher
 ├── storage/                   # SegmentCache: persistent storage (idb library) for transcripts & audio blobs
@@ -61,10 +66,13 @@ src/
 
 1. **100% Client-Side BYOK (ADR-0001)**: No backend server. Extension runs purely in-browser using Manifest V3. Users supply their own Gemini API key for translation; Edge TTS provides high-quality speech synthesis for free via Background Service Worker WebSockets.
 2. **Direct Volume Lerp for Audio Ducking (ADR-0002)**: Avoid Web Audio API `MediaElementAudioSourceNode` due to YouTube cross-origin audio streaming restrictions (`*.googlevideo.com`). Smoothly lerp `HTMLMediaElement.volume` between 1.0 and 0.2 over 150ms using `requestAnimationFrame`. Equalizer animations in the UI are event-driven rather than live FFT PCM analyzers.
-3. **Full Pre-Translation with Sliding-Window TTS (ADR-0003)**: Entire transcript translated upfront in one pass via `gemini-2.0-flash` (<$0.001 cost, <2s latency) for coherent global context; TTS audio synthesized JIT in a 30–60 second rolling window.
+3. **Full Pre-Translation with Sliding-Window TTS (ADR-0003, amended by ADR-0008)**: Entire transcript translated upfront in one pass via the configured Gemini Flash model when the user activates dubbing; TTS audio synthesized JIT in a 30–60 second rolling window.
 4. **Shadow DOM In-Player Controls (ADR-0004)**: Extension controls injected into `.ytp-right-controls` inside an isolated Shadow DOM container to ensure zero CSS bleed with YouTube.
 5. **Hyper Sci-Fi Audio HUD with Gentle YouTube Subtitles (ADR-0006 & DESIGN.md)**: Floating pill and expandable cockpit panel styled in futuristic glassmorphism and neon accents, while video subtitle overlays strictly adhere to clean, gentle YouTube-native black pill styling (`rgba(8, 8, 8, 0.84)` with `#ffffff` text) for zero eye fatigue.
 6. **Persistent Storage Library**: Uses Jake Archibald's lightweight, promise-based `idb` library to interact with IndexedDB for storing audio blobs and transcript segments.
+7. **Pluggable Translation (ADR-0007)**: Gemini or an OpenAI-compatible `/v1/chat/completions` proxy. LLM-only seam; YouTube Caption Translation does not implement `TranslationClient`.
+8. **On-Demand Activation (ADR-0008)**: Pipeline stays dormant until the Split Pill toggle; cache-hit is zero-jank, cache-miss pauses with a Preparation Overlay.
+9. **YouTube Caption Translation (ADR-0009)**: Peer Command Center provider. Caption acquisition via TranscriptFetcher (target-language track or machine-translated source), not LLM batches. Cache keys include Translation Provider. Fail visibly; no auto-fallback to Gemini. HUD label `YOUTUBE-CC`.
 
 ### Domain TypeScript Definitions (formalizing CONTEXT.md domain concepts)
 
@@ -136,16 +144,20 @@ export interface VoiceProfile {
 
 2. **Secondary Component Seams**:
    - `SentenceMerger`: Pure function test suite ensuring consecutive fragments separated by <0.4s are merged into coherent sentences while preserving overall start/end boundaries.
-   - `SegmentCache (IndexedDB via idb)`: Repository test suite using `fake-indexeddb` verifying store, retrieve, key indexing (`videoId_language_voiceId`), and purge operations.
+   - `SegmentCache (IndexedDB via idb)`: Repository test suite using `fake-indexeddb` verifying store, retrieve, key indexing (`videoId_language_voiceId` plus Translation Provider), and purge operations.
    - `EdgeTtsProtocol`: Message framing test suite verifying SSML payload generation (including `pitch` and `rate` tags) and binary WebSocket chunk assembly into valid audio blobs.
+   - **YouTube Caption Translation:** `OrchestratorCoordinator` pipeline is the primary seam (skip LLM, caption-acquisition Transcript, cache-by-provider, visible failure). `TranscriptFetcher` and Command Center are secondary. DubbingOrchestrator is unchanged (TTS/sync only).
 
 ## Out of Scope
 
-- Video platforms other than YouTube (e.g. Netflix, Coursera, Udemy) for MVP.
+- Video platforms other than YouTube (e.g. Netflix, Coursera, Udemy).
 - Server-side centralized audio caching or user accounts (100% client-side BYOK).
 - Real-time video voice cloning / custom zero-shot voice training.
 - Video frame lip-sync modification (Wav2Lip) — this is an audio dubbing extension, not video generation.
-- Paid commercial TTS providers (ElevenLabs, OpenAI TTS) in MVP: Microsoft Edge Neural TTS serves as the built-in default; ElevenLabs / OpenAI TTS integration is deferred to post-MVP as secondary BYOK plugins.
+- Paid commercial TTS providers (ElevenLabs, OpenAI TTS): Microsoft Edge Neural TTS is the built-in default; ElevenLabs / OpenAI TTS stay deferred as secondary BYOK plugins.
+- Google Cloud Translate / DeepL / scraping translate.google.com as Translation Providers.
+- Automatic fallback from YouTube Caption Translation to an LLM.
+- Solving YouTube `signatureCipher` / n-sig audio URLs for Whisper Fallback. Ciphered streams are skipped.
 
 ## Further Notes
 
