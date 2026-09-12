@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.auth import require_bearer
 from app.lang import normalize_lang
+
+log = logging.getLogger("uvicorn.error")
 
 
 def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
@@ -65,14 +69,21 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
     @app.post("/v1/tts")
     async def tts(payload: dict, authorization: str | None = Header(default=None)):
         require_bearer(authorization, app.state.api_key)
+        if not isinstance(payload, dict):
+            log.warning("tts reject body_type=%s", type(payload).__name__)
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
         text = str(payload.get("text") or "").strip()
         if not text:
+            log.warning("tts reject empty")
             raise HTTPException(status_code=400, detail="text is required")
         if len(text) > 500:
             text = text[:500].rsplit(" ", 1)[0] or text[:500]
+            log.info("tts truncated chars=%s", len(text))
         fmt = str(payload.get("format") or "mp3").lower()
         if fmt != "mp3":
+            log.warning("tts reject format=%s chars=%s", fmt, len(text))
             raise HTTPException(status_code=400, detail="format must be mp3")
+        log.info("tts chars=%s", len(text))
         if app.state.tts_engine is None:
             raise HTTPException(status_code=503, detail="tts unavailable")
         try:

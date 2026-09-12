@@ -86,6 +86,15 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
         };
       }
 
+      const clipped = (text ?? '').trim();
+      if (!clipped) {
+        return {
+          success: false,
+          code: 'BACKEND_TTS_UNAVAILABLE',
+          error: 'empty TTS text',
+        };
+      }
+
       const base = (settings.backendUrl || 'http://127.0.0.1:8787').replace(/\/+$/, '');
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), fetchTimeoutMs);
@@ -97,7 +106,7 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: text.length > 500 ? text.slice(0, 500) : text,
+            text: clipped.length > 500 ? clipped.slice(0, 500) : clipped,
             lang: voice.locale ?? 'vi-VN',
             voice: voice.voiceKey ?? voice.id,
             rate: voice.rate ?? '+0%',
@@ -106,7 +115,18 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
           signal: controller.signal,
         });
         if (!response.ok) {
-          return fail(`Backend TTS failed: HTTP ${response.status}`);
+          let detail = '';
+          try {
+            const body = await response.json();
+            detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail ?? '');
+          } catch {
+            detail = '';
+          }
+          return fail(
+            detail
+              ? `Backend TTS failed: HTTP ${response.status} (${detail})`
+              : `Backend TTS failed: HTTP ${response.status}`,
+          );
         }
         const buffer: ArrayBuffer = await response.arrayBuffer();
         if (!buffer || buffer.byteLength === 0) {

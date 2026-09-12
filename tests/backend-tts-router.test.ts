@@ -36,6 +36,27 @@ describe('createBackendTtsRouter', () => {
     expect(fetchFn.mock.calls[0][1].headers.Authorization).toBe('Bearer k');
   });
 
+  it('does not call the backend or trip the breaker for empty text', async () => {
+    const fetchFn = vi.fn();
+    const router = createBackendTtsRouter({
+      fetchFn,
+      getSettings: async () => ({
+        backendUrl: 'http://127.0.0.1:8787',
+        backendApiKey: 'k',
+        ttsProvider: 'backend',
+      }),
+    });
+    const result = await router.synthesize('   ', DEFAULT_HOAI_MY_VOICE);
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error('expected empty-text skip');
+    expect(result.error).toMatch(/empty/i);
+    expect(fetchFn).not.toHaveBeenCalled();
+    fetchFn.mockResolvedValueOnce(mp3Response());
+    const next = await router.synthesize('Xin chào', DEFAULT_HOAI_MY_VOICE);
+    expect(next.success).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it('returns WEB_SPEECH_REQUIRED when ttsProvider is web-speech', async () => {
     const fetchFn = vi.fn();
     const router = createBackendTtsRouter({
