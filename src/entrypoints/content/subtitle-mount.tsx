@@ -39,8 +39,25 @@ function updateNativeCcSuppression(suppress: boolean): void {
       const style = document.createElement('style');
       style.id = NATIVE_CC_STYLE_ID;
       style.textContent = `
-        .ytp-caption-window-bottom {
+        .caption-window,
+        .caption-window *,
+        .ytp-caption-window,
+        .ytp-caption-window *,
+        .ytp-caption-window-bottom,
+        .ytp-caption-window-bottom *,
+        .ytp-caption-window-top,
+        .ytp-caption-window-top *,
+        .ytp-caption-window-rollup,
+        .ytp-caption-window-rollup *,
+        .ytp-caption-segment,
+        .ytp-caption-window-container,
+        .ytp-caption-window-container *,
+        #ytp-caption-window-container,
+        #ytp-caption-window-container * {
           display: none !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
         }
       `;
       (document.head || document.documentElement || document.body)?.appendChild(style);
@@ -167,13 +184,10 @@ export function mountSubtitleOverlay(
   const renderComponent = () => {
     if (!mounted || !root) return;
 
-    // Check if subtitle should actively suppress native CC
+    // Keep native CC continuously suppressed as long as subtitle overlay is active/visible,
+    // preventing YouTube's native CC from flickering back in during silence gaps or segment transitions.
     const isVis = currentProps.visible !== false;
-    const hasActiveContent = Boolean(
-      currentProps.segment &&
-        (currentProps.segment.translatedText || currentProps.segment.sourceText)
-    );
-    updateNativeCcSuppression(isVis && hasActiveContent);
+    updateNativeCcSuppression(isVis);
 
     flushSync(() => {
       root?.render(

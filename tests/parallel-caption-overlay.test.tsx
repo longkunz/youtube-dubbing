@@ -225,6 +225,44 @@ describe('Parallel Caption Overlay Mount & Encapsulation', () => {
     expect(document.getElementById('aetherdub-native-cc-suppression')).toBeNull();
   });
 
+  it('maintains native CC suppression across segment transitions and gaps while visible is true', async () => {
+    const instance = mountSubtitleOverlay(moviePlayer, {
+      segment: sampleSegment,
+      visible: true,
+    });
+
+    // Suppression active initially
+    expect(document.getElementById('aetherdub-native-cc-suppression')).not.toBeNull();
+
+    // Transition: video playhead enters gap between dialogue lines (segment is null)
+    await act(async () => {
+      instance.setSegment(null);
+    });
+
+    // Native CC MUST NOT flicker back into view during segment gaps
+    expect(document.getElementById('aetherdub-native-cc-suppression')).not.toBeNull();
+
+    // Transition: next segment begins
+    await act(async () => {
+      instance.setSegment({
+        id: 'seg-2',
+        startTime: 15,
+        endTime: 20,
+        duration: 5,
+        sourceText: 'Second segment text',
+        translatedText: 'Đoạn phụ đề thứ hai',
+      });
+    });
+
+    expect(document.getElementById('aetherdub-native-cc-suppression')).not.toBeNull();
+
+    // Explicitly toggling visibility to false restores native CC
+    await act(async () => {
+      instance.setVisible(false);
+    });
+    expect(document.getElementById('aetherdub-native-cc-suppression')).toBeNull();
+  });
+
   it('immediately updates rendered text on scrub sync via setSegment', async () => {
     const instance = mountSubtitleOverlay(moviePlayer, {
       segment: sampleSegment,

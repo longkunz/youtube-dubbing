@@ -24,7 +24,7 @@ export function tryMount(): HudInstance | null {
   const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   if (player) {
     try {
-      mountSubtitleOverlay(player as HTMLElement);
+      mountSubtitleOverlay(player as HTMLElement, { visible: false });
     } catch {}
   }
 
