@@ -2,6 +2,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.auth import require_bearer
+from app.lang import normalize_lang
 
 
 def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
@@ -22,9 +23,44 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         }
 
     @app.post("/v1/translate")
-    async def translate(request: Request, authorization: str | None = Header(default=None)):
+    async def translate(payload: dict, authorization: str | None = Header(default=None)):
         require_bearer(authorization, app.state.api_key)
-        raise HTTPException(status_code=501, detail="translate not implemented")
+        source = normalize_lang(payload.get("source"))
+        target = normalize_lang(payload.get("target"))
+        cues = payload.get("cues")
+        if not isinstance(cues, list) or len(cues) == 0:
+            raise HTTPException(status_code=400, detail="cues must be a non-empty list")
+        if len(cues) > 50:
+            raise HTTPException(status_code=400, detail="cues cannot exceed 50 items")
+        if source != "en" or target != "vi":
+            if source == target and source:
+                items = [{"id": str(c.get("id", "")), "text": str(c.get("text") or "").strip()} for c in cues]
+                return {"items": items}
+            raise HTTPException(status_code=400, detail="V1 only supports EN→VI translation")
+        for cue in cues:
+            text = str(cue.get("text") or "")
+            if len(text) > 2000:
+                raise HTTPException(status_code=400, detail="cue text cannot exceed 2000 characters")
+        if app.state.translator is None:
+            raise HTTPException(status_code=503, detail="translator unavailable")
+        items = []
+        to_model = []
+        to_model_idx = []
+        for i, cue in enumerate(cues):
+            raw = str(cue.get("text") or "")
+            stripped = raw.strip()
+            cue_id = str(cue.get("id", ""))
+            if not stripped:
+                items.append({"id": cue_id, "text": ""})
+                continue
+            items.append({"id": cue_id, "text": None})
+            to_model.append(stripped)
+            to_model_idx.append(len(items) - 1)
+        if to_model:
+            translated = app.state.translator.translate_texts(to_model)
+            for idx, text in zip(to_model_idx, translated):
+                items[idx]["text"] = text
+        return {"items": items}
 
     @app.post("/v1/tts")
     async def tts(request: Request, authorization: str | None = Header(default=None)):
