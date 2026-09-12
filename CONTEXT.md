@@ -88,4 +88,8 @@ _Avoid_: Double button, toggle pill, combined widget
 Groq Whisper speech-to-text used only after YouTube caption fetch fails, requiring a user Groq API key and an unsigned audio URL from the player response.
 _Avoid_: Always-on STT, tab capture, YouTube-dl, automatic transcription on every video
 
+**In-Page Command Center**:
+The slide-over drawer interface presenting the complete configuration dashboard docked to the viewport edge within a dedicated page-level Shadow DOM Mount, invoked via the browser action icon or the Cyber Cockpit.
+_Avoid_: Options page, settings popup, configuration window, options tab, centered modal
+
 
