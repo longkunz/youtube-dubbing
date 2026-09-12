@@ -92,4 +92,8 @@ _Avoid_: Always-on STT, tab capture, YouTube-dl, automatic transcription on ever
 The slide-over drawer interface presenting the complete configuration dashboard docked to the viewport edge within a dedicated page-level Shadow DOM Mount, invoked via the browser action icon or the Cyber Cockpit.
 _Avoid_: Options page, settings popup, configuration window, options tab, centered modal
 
+**Parallel Caption Overlay**:
+The unified, centered in-player visual subtitle component displaying synchronized source dialogue alongside translated text over the video player within a dedicated Shadow DOM Mount, capable of operating independently of Dub Track audio.
+_Avoid_: Dual CC, bilingual subs, sub hack, caption merger, double subtitle
+
 
