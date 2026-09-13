@@ -1,6 +1,6 @@
 # Hy-MT2 + ZeroTTS Self-hosted Backend
 
-Status: proposed  
+Status: accepted  
 Date: 2026-09-13  
 Supersedes: ADR-0010 (CPU Opus-MT + Piper/Edge TTS)  
 Related: ADR-0013, `docs/superpowers/specs/2026-09-13-strict-backend-only-design.md` (extension; out of this ticket)

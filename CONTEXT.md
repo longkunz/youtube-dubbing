@@ -61,7 +61,7 @@ The Self-hosted Backend translation service exposing `/v1/translate` (MarianMT E
 _Avoid_: Translation API, LLM wrapper, model server, auto-translate toggle
 
 **Self-hosted Backend**:
-Operator-run Docker service exposing `/v1/translate` (MarianMT EN→VI cue translation) and `/v1/tts` (ZeroTTS real-time CPU speech synthesis). The exclusive processing engine for dubbing.
+Operator-run Docker service exposing `/v1/translate` and `/v1/tts` for cue text into Vietnamese and MP3 speech.
 _Avoid_: the API, cloud, our server
 
 **ZeroTTS Engine**:
