@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response
 from app.auth import require_bearer
 from app.lang import is_supported_source, normalize_lang
 from app.translate import DelimiterMismatchError
+from app.tts import is_zerotts_voice
 
 log = logging.getLogger("uvicorn.error")
 
@@ -24,8 +25,6 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
             "ok": True,
             "translate": "ready" if app.state.translator is not None else "unavailable",
             "tts": tts.status() if tts is not None else "unavailable",
-            "ttsFallback": "edge-tts",
-            "breaker": tts.breaker_state() if tts is not None else "closed",
         }
 
     @app.post("/v1/translate")
@@ -93,20 +92,18 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
         if fmt != "mp3":
             log.warning("tts reject format=%s chars=%s", fmt, len(text))
             raise HTTPException(status_code=400, detail="format must be mp3")
-        engine = str(payload.get("engine") or "auto")
-        log.info("tts chars=%s engine=%s", len(text), engine)
+        voice = str(payload.get("voice") or "").strip()
+        if not is_zerotts_voice(voice):
+            raise HTTPException(status_code=400, detail="unknown voice")
         if app.state.tts_engine is None:
             raise HTTPException(status_code=503, detail="tts unavailable")
         try:
-            audio = await asyncio.to_thread(
-                app.state.tts_engine.synthesize,
-                text,
-                str(payload.get("voice") or "vi-VN-HoaiMyNeural"),
-                str(payload.get("rate") or "+0%"),
-                engine,
+            audio = await asyncio.wait_for(
+                asyncio.to_thread(app.state.tts_engine.synthesize, text, voice),
+                timeout=25,
             )
         except Exception:
-            log.exception("tts synthesis failed engine=%s chars=%s", engine, len(text))
+            log.exception("tts synthesis failed voice=%s chars=%s", voice, len(text))
             raise HTTPException(status_code=502, detail="tts synthesis failed")
         return Response(content=audio, media_type="audio/mpeg")
 

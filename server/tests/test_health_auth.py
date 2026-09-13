@@ -12,8 +12,18 @@ def test_health_is_unauthenticated_and_reports_unavailable_engines():
     assert body["ok"] is True
     assert body["translate"] == "unavailable"
     assert body["tts"] == "unavailable"
-    assert body["ttsFallback"] == "edge-tts"
-    assert body["breaker"] == "closed"
+    assert "ttsFallback" not in body
+    assert "breaker" not in body
+
+
+def test_health_ready_when_engines_injected():
+    class Ready:
+        def status(self):
+            return "ready"
+
+    app = create_app(api_key="test-key", translator=object(), tts_engine=Ready())
+    body = TestClient(app).get("/v1/health").json()
+    assert body == {"ok": True, "translate": "ready", "tts": "ready"}
 
 
 def test_translate_without_bearer_is_401():

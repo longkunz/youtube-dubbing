@@ -1,89 +1,66 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+import threading
+from collections.abc import Callable
 
 from app.cache import FileCache
 
 log = logging.getLogger("aetherdub.tts")
 
-PiperFn = Callable[[str, str, str], bytes]
-EdgeFn = Callable[[str, str, str], bytes]
+ZERO_TTS_VOICES = frozenset(
+    {
+        "maichi",
+        "baotrang",
+        "kimoanh",
+        "hamy",
+        "giahuy",
+        "huuduc",
+        "quangminh",
+        "tiendat",
+    }
+)
+
+NormalizeFn = Callable[[str], str]
+SynthFn = Callable[[str, str], bytes]
 Mp3Fn = Callable[[bytes], bytes]
 
 
-def edge_voice_for(voice: str | None) -> str:
-    raw = voice or ""
-    if "NamMinh" in raw:
-        return "vi-VN-NamMinhNeural"
-    return "vi-VN-HoaiMyNeural"
+def is_zerotts_voice(voice: str) -> bool:
+    return voice in ZERO_TTS_VOICES
 
 
 class TtsEngine:
     def __init__(
         self,
         *,
-        piper: PiperFn,
-        edge: EdgeFn,
+        synthesize_wav: SynthFn,
         to_mp3: Mp3Fn,
+        normalize: NormalizeFn,
         cache: FileCache,
-        piper_timeout_s: float = 2.5,
-        edge_timeout_s: float = 8.0,
+        lock: threading.Lock | None = None,
     ):
-        self._piper = piper
-        self._edge = edge
+        self._synthesize_wav = synthesize_wav
         self._to_mp3 = to_mp3
+        self._normalize = normalize
         self._cache = cache
-        self.piper_timeout_s = piper_timeout_s
-        self.edge_timeout_s = edge_timeout_s
-        self._edge_failures = 0
-        self._breaker_open = False
+        self._lock = lock or threading.Lock()
 
     def status(self) -> str:
-        return "piper-only" if self._breaker_open else "piper"
+        return "ready"
 
-    def breaker_state(self) -> str:
-        return "open" if self._breaker_open else "closed"
-
-    def synthesize(self, text: str, voice: str, rate: str, engine: str = "auto") -> bytes:
-        mode = (engine or "auto").lower()
-        if mode not in ("piper", "edge", "auto"):
-            mode = "auto"
-        cache_key = f"{text}|{voice}|{rate}|{mode}|mp3"
+    def synthesize(self, text: str, voice: str) -> bytes:
+        normalized = self._normalize(text)
+        cache_key = f"zerotts|{voice}|{normalized}|mp3"
         hit = self._cache.get_bytes(cache_key)
         if hit is not None:
-            log.info("tts cache hit chars=%s engine=%s", len(text), mode)
+            log.info("tts cache hit chars=%s voice=%s", len(text), voice)
             return hit
-
-        if mode != "edge":
-            try:
-                wav = self._piper(text, voice, rate)
-                if not wav:
-                    raise RuntimeError("empty piper audio")
-                mp3 = self._to_mp3(wav)
-                self._cache.set_bytes(cache_key, mp3)
-                log.info("tts engine=piper chars=%s", len(text))
-                return mp3
-            except Exception:
-                log.info("tts piper failed chars=%s", len(text))
-                if mode == "piper":
-                    raise
-
-        if self._breaker_open:
-            raise RuntimeError("tts unavailable: edge breaker open")
-
-        try:
-            audio = self._edge(text, edge_voice_for(voice), rate)
-            if not audio:
-                raise RuntimeError("empty edge audio")
-            mp3 = audio if audio[:3] == b"ID3" or audio[:2] == b"\xff\xfb" else self._to_mp3(audio)
-            self._edge_failures = 0
-            self._cache.set_bytes(cache_key, mp3)
-            log.info("tts engine=edge-tts chars=%s", len(text))
-            return mp3
-        except Exception:
-            self._edge_failures += 1
-            if self._edge_failures >= 3:
-                self._breaker_open = True
-            log.info("tts edge failed chars=%s breaker=%s", len(text), self.breaker_state())
-            raise
+        with self._lock:
+            wav = self._synthesize_wav(normalized, voice)
+            if not wav:
+                raise RuntimeError("empty zerotts audio")
+            mp3 = self._to_mp3(wav)
+        self._cache.set_bytes(cache_key, mp3)
+        log.info("tts engine=zerotts chars=%s voice=%s", len(text), voice)
+        return mp3
