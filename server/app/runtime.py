@@ -1,116 +1,22 @@
 from __future__ import annotations
 
-import asyncio
+import logging
 import os
+from pathlib import Path
 import subprocess
 import tempfile
-from pathlib import Path
-
-import io
-import logging
-import wave
+import threading
 
 from app.cache import FileCache
-from app.translate import CTranslate2Translator, MarianBatchTranslator
-from app.tts import TtsEngine
 
 log = logging.getLogger("uvicorn.error")
 
 
-def piper_synth(text: str, voice: str, rate: str) -> bytes:
-    model_root = Path(os.environ.get("MODEL_ROOT", "/models"))
-    model = model_root / "piper" / "vi_VN-vais1000-medium.onnx"
-    fd, out_path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    out = Path(out_path)
-    try:
-        subprocess.run(
-            ["piper", "--model", str(model), "--output_file", str(out)],
-            input=text.encode("utf-8"),
-            check=True,
-            timeout=float(os.environ.get("PIPER_TIMEOUT", "2.5")),
-        )
-        return out.read_bytes()
-    finally:
-        if out.exists():
-            out.unlink()
-
-
-def edge_synth(text: str, voice: str, rate: str) -> bytes:
-    import edge_tts
-
-    async def _run():
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        audio = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio.extend(chunk["data"])
-        return bytes(audio)
-
-    timeout_s = float(os.environ.get("EDGE_TIMEOUT", "8.0"))
-    return asyncio.run(asyncio.wait_for(_run(), timeout=timeout_s))
-
-
-def _float_to_wav_bytes(waveform, sample_rate: int) -> bytes:
-    import numpy as np
-
-    audio = waveform.squeeze().detach().cpu().numpy()
-    audio = np.clip(audio, -1.0, 1.0)
-    pcm = (audio * 32767.0).astype("<i2")
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(int(sample_rate))
-        wf.writeframes(pcm.tobytes())
-    return buf.getvalue()
-
-
 def _cuda_device_present() -> bool:
-    """Do not call torch.cuda.is_available() unless a device node exists.
-
-    CUDA wheels on a CPU-only host can hang inside the CUDA probe.
-    """
     vis = os.environ.get("CUDA_VISIBLE_DEVICES", "unset")
     if vis in ("", "-1"):
         return False
     return Path("/dev/nvidia0").exists()
-
-
-def try_load_mms(model_root: Path):
-    """Load facebook/mms-tts-vie on CUDA. Returns None without a GPU."""
-    if not _cuda_device_present():
-        log.info("mms-tts skipped: no NVIDIA device, using Piper for local TTS")
-        return None
-    try:
-        import torch
-        from transformers import AutoTokenizer, VitsModel
-    except Exception as exc:
-        log.info("mms-tts skipped: %s", exc)
-        return None
-    if not torch.cuda.is_available():
-        log.info("mms-tts skipped: CUDA not available, using Piper for local TTS")
-        return None
-    hf_cache = str(model_root / "hf-cache")
-    model = VitsModel.from_pretrained("facebook/mms-tts-vie", cache_dir=hf_cache).to("cuda")
-    tokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-vie", cache_dir=hf_cache)
-    model.eval()
-    log.info("mms-tts-vie ready on cuda")
-    return model, tokenizer
-
-
-def make_mms_synth(bundle):
-    model, tokenizer = bundle
-
-    def mms_synth(text: str, voice: str, rate: str) -> bytes:
-        import torch
-
-        inputs = tokenizer(text, return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            waveform = model(**inputs).waveform
-        return _float_to_wav_bytes(waveform, model.config.sampling_rate)
-
-    return mms_synth
 
 
 def wav_to_mp3(data: bytes) -> bytes:
@@ -136,31 +42,122 @@ def wav_to_mp3(data: bytes) -> bytes:
             out.unlink()
 
 
-def build_runtime(model_root_str: str | None = None, cache_root_str: str | None = None):
-    model_root_str = model_root_str or os.environ.get("MODEL_ROOT", "/models")
-    cache_root_str = cache_root_str or os.environ.get("CACHE_ROOT", "/cache")
-    model_root = Path(model_root_str)
-    cache = FileCache(cache_root_str)
+def _float32_to_wav_bytes(audio, sample_rate: int) -> bytes:
+    import io
+    import wave
+    import numpy as np
 
-    translator = None
-    opus_dir = model_root / "opus-mt-en-vi"
-    if (opus_dir / "model.bin").is_file():
-        hf_cache = str(model_root / "hf-cache")
-        live = MarianBatchTranslator.load(str(opus_dir), cache_dir=hf_cache)
-        translator = CTranslate2Translator(live, cache=cache)
+    pcm = (np.clip(np.asarray(audio).reshape(-1), -1.0, 1.0) * 32767.0).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(int(sample_rate))
+        wf.writeframes(pcm.tobytes())
+    return buf.getvalue()
 
-    mms = try_load_mms(model_root)
-    local_synth = make_mms_synth(mms) if mms is not None else piper_synth
-    piper_model = model_root / "piper" / "vi_VN-vais1000-medium.onnx"
-    tts_engine = None
-    if mms is not None or piper_model.is_file():
-        tts_engine = TtsEngine(
-            piper=local_synth,
-            edge=edge_synth,
-            to_mp3=wav_to_mp3,
-            cache=cache,
-            piper_timeout_s=float(os.environ.get("PIPER_TIMEOUT", "8.0" if mms else "2.5")),
-            edge_timeout_s=float(os.environ.get("EDGE_TIMEOUT", "8.0")),
+
+def default_load_translator(cache: FileCache):
+    if not _cuda_device_present():
+        log.info("hy-mt2 skipped: no NVIDIA device")
+        return None
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from app.translate import HyMt2Translator
+
+    model_id = "tencent/Hy-MT2-1.8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=True,
+    )
+    model.eval()
+    lock = threading.Lock()
+
+    def generate(prompt: str) -> str:
+        messages = [{"role": "user", "content": prompt}]
+        input_ids = tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt"
         )
+        if hasattr(input_ids, "to"):
+            input_ids = input_ids.to(model.device)
+            outputs = model.generate(
+                input_ids,
+                max_new_tokens=4096,
+                temperature=0.7,
+                top_p=0.6,
+                top_k=20,
+                repetition_penalty=1.05,
+            )
+            new_tokens = outputs[0][input_ids.shape[-1] :]
+        else:
+            inputs = {k: v.to(model.device) for k, v in input_ids.items()}
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=4096,
+                temperature=0.7,
+                top_p=0.6,
+                top_k=20,
+                repetition_penalty=1.05,
+            )
+            new_tokens = outputs[0][inputs["input_ids"].shape[-1] :]
+        return tokenizer.decode(new_tokens, skip_special_tokens=True)
 
+    log.info("hy-mt2-1.8b ready on cuda")
+    return HyMt2Translator(generate, cache=cache, lock=lock)
+
+
+def default_load_tts(cache: FileCache):
+    from zerotts import ZeroTTS, normalize_vi_text
+    from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
+    from app.tts import TtsEngine
+
+    tts = ZeroTTS.from_pretrained("zeroweight-ai/ZeroTTS")
+
+    def synthesize_wav(text: str, voice: str) -> bytes:
+        segments = [
+            clean_segment_punctuation(s)
+            for s in chunk_text(normalize_punctuation(text), max_chunk_sec=15)
+        ] or [text]
+        chunks = []
+        for segment in segments:
+            audio = tts.synthesize(segment, voice=voice)
+            chunks.append(audio.reshape(-1))
+        import numpy as np
+        waveform = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+        return _float32_to_wav_bytes(waveform, tts.sample_rate)
+
+    return TtsEngine(
+        synthesize_wav=synthesize_wav,
+        to_mp3=wav_to_mp3,
+        normalize=normalize_vi_text,
+        cache=cache,
+    )
+
+
+def build_runtime(
+    model_root_str: str | None = None,
+    cache_root_str: str | None = None,
+    *,
+    load_translator=None,
+    load_tts=None,
+):
+    cache_root_str = cache_root_str or os.environ.get("CACHE_ROOT", "/cache")
+    cache = FileCache(cache_root_str)
+    load_translator = load_translator or default_load_translator
+    load_tts = load_tts or default_load_tts
+    translator = None
+    tts_engine = None
+    try:
+        translator = load_translator(cache)
+    except Exception as exc:
+        log.info("translator unavailable: %s", exc)
+        translator = None
+    try:
+        tts_engine = load_tts(cache)
+    except Exception as exc:
+        log.info("tts unavailable: %s", exc)
+        tts_engine = None
     return translator, tts_engine

@@ -7,8 +7,7 @@ WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 RUN mkdir -p /app/app && printf "# placeholder for pip install .\n" > /app/app/__init__.py
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
-RUN pip install --no-cache-dir . \
-    && pip install --no-cache-dir transformers sentencepiece sacremoses
+RUN pip install --no-cache-dir .
 
 COPY app /app/app
 COPY scripts /app/scripts

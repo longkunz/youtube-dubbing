@@ -1,3 +1,4 @@
+# NVIDIA Container Toolkit required for /v1/translate; without a GPU the container still starts and TTS may be ready.
 services:
   api:
     build: .
@@ -10,9 +11,8 @@ services:
       CACHE_ROOT: /cache
       HF_HOME: /models/hf-cache
       PYTHONUNBUFFERED: "1"
-      # GPU host only: uncomment the next two lines
-      # NVIDIA_VISIBLE_DEVICES: all
-    # gpus: all
+      NVIDIA_VISIBLE_DEVICES: all
+    gpus: all
     volumes:
       - ./models:/models
       - ./cache:/cache
