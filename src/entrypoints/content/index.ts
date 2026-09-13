@@ -1,7 +1,15 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { getExtensionRuntime } from '@/core/extension-runtime';
 import { mountHud, HudInstance } from './mount';
-import { stopDubbingPipeline } from './orchestrator-coordinator';
+import { mountSubtitleOverlay, resetSubtitleMountForTesting } from './subtitle-mount';
+import {
+  extractVideoId,
+  getCoordinatorState,
+  getSubOnlyState,
+  stopDubbingPipeline,
+  stopSubOnlyPipeline,
+} from './orchestrator-coordinator';
+import { toggleCommandCenter, closeCommandCenter } from './command-center-mount';
 
 let activeInstance: HudInstance | null = null;
 
@@ -13,6 +21,13 @@ let activeInstance: HudInstance | null = null;
  * explicitly activates dubbing via the Split Pill Control.
  */
 export function tryMount(): HudInstance | null {
+  const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+  if (player) {
+    try {
+      mountSubtitleOverlay(player as HTMLElement, { visible: false });
+    } catch {}
+  }
+
   const controls = document.querySelector('.ytp-right-controls') as HTMLElement | null;
   if (!controls) {
     if (activeInstance) {
@@ -20,11 +35,29 @@ export function tryMount(): HudInstance | null {
       activeInstance = null;
       stopDubbingPipeline();
     }
+    stopSubOnlyPipeline();
     return null;
   }
 
-  // Already mounted and host element still present — return the existing instance.
-  // Do NOT restart the pipeline on re-check.
+  const currentVideoId = extractVideoId();
+  const runningId = getCoordinatorState().activeVideoId;
+  const runningSubId = getSubOnlyState().activeVideoId;
+  if (
+    (runningId && runningId !== currentVideoId) ||
+    (runningSubId && runningSubId !== currentVideoId)
+  ) {
+    stopDubbingPipeline();
+    stopSubOnlyPipeline();
+    activeInstance?.updateProps?.({
+      isEnabled: false,
+      isSubtitlesEnabled: false,
+      activeSegment: null,
+      orchestrator: undefined,
+    });
+  }
+
+  // Already mounted and host element still present — keep HUD, but never keep
+  // a Dub Track from a previous watch id (YouTube reuses ytp-right-controls).
   if (activeInstance && activeInstance.isMounted() && controls.querySelector('[data-aetherdub-host]')) {
     return activeInstance;
   }
@@ -34,6 +67,7 @@ export function tryMount(): HudInstance | null {
     activeInstance.unmount();
     activeInstance = null;
     stopDubbingPipeline();
+    stopSubOnlyPipeline();
   }
 
   // Mount fresh — in dormant state, no pipeline launch
@@ -43,6 +77,8 @@ export function tryMount(): HudInstance | null {
 
 export function resetActiveInstanceForTesting(): void {
   stopDubbingPipeline();
+  stopSubOnlyPipeline();
+  resetSubtitleMountForTesting();
   if (activeInstance) {
     activeInstance.unmount();
     activeInstance = null;
@@ -70,9 +106,26 @@ export default defineContentScript({
     keepBackgroundAlive();
     tryMount();
 
-    // YouTube SPA navigation events — remount HUD in dormant state,
+    // Listen for TOGGLE_COMMAND_CENTER from background toolbar action
+    const runtime = getExtensionRuntime();
+    const handleMessage = (message: any, _sender: any, sendResponse: any) => {
+      if (message?.action === 'TOGGLE_COMMAND_CENTER') {
+        toggleCommandCenter();
+        sendResponse?.({ success: true });
+        return false;
+      }
+    };
+    if (runtime?.onMessage) {
+      runtime.onMessage.addListener(handleMessage);
+    } else if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+      chrome.runtime.onMessage.addListener(handleMessage);
+    }
+
+    // YouTube SPA navigation events — close command center and remount HUD in dormant state,
     // do NOT auto-start pipeline (On-Demand Activation, ADR-0008).
     window.addEventListener('yt-navigate-finish', () => {
+      closeCommandCenter();
+      stopSubOnlyPipeline();
       tryMount();
     });
 

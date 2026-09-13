@@ -1,0 +1,19 @@
+# NVIDIA Container Toolkit required for /v1/translate; without a GPU the container still starts and TTS may be ready.
+services:
+  api:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      MODEL_ROOT: /models
+      CACHE_ROOT: /cache
+      HF_HOME: /models/hf-cache
+      PYTHONUNBUFFERED: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+    gpus: all
+    volumes:
+      - ./models:/models
+      - ./cache:/cache
+    restart: unless-stopped

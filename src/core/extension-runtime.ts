@@ -14,6 +14,15 @@ interface ExtensionRuntime {
   sendMessage: RuntimeSendMessage;
   lastError?: { message?: string };
   connect?: (info?: { name?: string }) => { onDisconnect?: { addListener: (fn: () => void) => void } };
+  onMessage?: {
+    addListener: (
+      callback: (
+        message: unknown,
+        sender: unknown,
+        sendResponse: (response?: unknown) => void
+      ) => boolean | void
+    ) => void;
+  };
 }
 
 export function getExtensionRuntime(): ExtensionRuntime | null {

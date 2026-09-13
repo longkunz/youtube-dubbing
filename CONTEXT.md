@@ -40,10 +40,6 @@ _Avoid_: Subtitle joining, caption cleaning, text stitching
 A YouTube-provided timed text stream for a video in one language, before Sentence Restructuring.
 _Avoid_: CC track, closed captions, timedtext, subtitle file
 
-**YouTube Caption Translation**:
-Obtaining translated Segment text from YouTube: an existing Caption Track in the target language, or YouTube's machine translation of a translatable source Caption Track. Not an LLM and not speaker diarization.
-_Avoid_: tlang, auto-translate, Google Translate, YouTube CC translate
-
 **Segment Cache**:
 Persistent IndexedDB storage of translated text and synthesized audio blobs keyed by video, target language, Translation Provider, and voice profile.
 _Avoid_: Local database, audio storage, response cache
@@ -61,12 +57,20 @@ A specific speech synthesis configuration defined by locale, gender, pitch, rate
 _Avoid_: Speaker preset, narrator option, voice persona
 
 **Translation Provider**:
-The user-selected source of translated Segment text: an LLM backend (Google Gemini or an OpenAI-Compatible Endpoint) or YouTube Caption Translation. Chosen in Command Center; not switched automatically.
+The Self-hosted Backend translation service exposing `/v1/translate` (MarianMT EN→VI). Third-party cloud LLMs (Gemini, OpenAI) and YouTube Caption Translation are retired.
 _Avoid_: Translation API, LLM wrapper, model server, auto-translate toggle
 
-**OpenAI-Compatible Endpoint**:
-A REST API gateway conforming to the standard `/v1/chat/completions` specification, accepting customizable base URLs, model identifiers, and optional bearer tokens.
-_Avoid_: Custom proxy, chat URL, backend proxy
+**Self-hosted Backend**:
+Operator-run Docker service exposing `/v1/translate` and `/v1/tts` for cue text into Vietnamese and MP3 speech.
+_Avoid_: the API, cloud, our server
+
+**ZeroTTS Engine**:
+The lightweight, CPU-optimized Vietnamese zero-shot text-to-speech engine running on the Self-hosted Backend, delivering real-time streaming audio (~70ms TTFA) without GPU requirements.
+_Avoid_: external TTS, cloud voice, edge websocket
+
+**Backend Reconnect**:
+The non-destructive recovery flow on the Cyber Cockpit HUD where the user re-triggers dubbing after backend outage, resetting the circuit breaker and verifying `/v1/health` without a full page reload.
+_Avoid_: page refresh, hard reset, manual reload
 
 **On-Demand Activation**:
 The lifecycle model where dubbing remains dormant upon video load until explicitly engaged by the user, replacing automatic background pipeline initiation.
@@ -80,8 +84,21 @@ _Avoid_: Center spinner, loading modal, buffering popup, wait screen
 A dual-action control surface on the YouTube player toolbar combining a direct Dub Track toggle action with a dedicated settings expander for the Cyber Cockpit.
 _Avoid_: Double button, toggle pill, combined widget
 
-**Whisper Fallback**:
-Groq Whisper speech-to-text used only after YouTube caption fetch fails, requiring a user Groq API key and an unsigned audio URL from the player response.
-_Avoid_: Always-on STT, tab capture, YouTube-dl, automatic transcription on every video
+**In-Page Command Center**:
+The slide-over drawer interface presenting the complete configuration dashboard docked to the viewport edge within a dedicated page-level Shadow DOM Mount, invoked via the browser action icon or the Cyber Cockpit.
+_Avoid_: Options page, settings popup, configuration window, options tab, centered modal
+
+**Parallel Caption Overlay**:
+The unified, in-player visual subtitle component displaying synchronized source dialogue alongside translated text in an eJOY-style hierarchical bilingual layout (prominent source line on top, high-contrast translation below, translucent dark pill with text-shadow contrast) over the video player within a dedicated Shadow DOM Mount, capable of operating independently of Dub Track audio.
+_Avoid_: Dual CC, bilingual subs, sub hack, caption merger, double subtitle
+
+**Draggable Subtitle Position**:
+The user-customized, percentage-based spatial coordinates of the Parallel Caption Overlay relative to the host video player, bounded within the player viewport, persisted in extension storage across fullscreen/theater resizes, and resettable via double-click or Command Center.
+_Avoid_: Absolute pixel coordinate, sub offset, fixed position, drag state
+
+**Subtitle Learning Suite**:
+The collection of interactive pedagogical controls embedded in the In-Page Command Center and subtitle pipeline, featuring independent dual-line font sliders, customizable color palettes, background opacity control, live previewing, automatic playback pause at segment boundaries for repetition practice, and keyboard navigation hotkeys (A/S/D).
+_Avoid_: Study mode, language hack, ejoy clone, learner settings
+
 
 

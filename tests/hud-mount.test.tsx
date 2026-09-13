@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mountHud } from '@/entrypoints/content/mount';
 import { tryMount, resetActiveInstanceForTesting } from '@/entrypoints/content/index';
+import { mountSubtitleOverlay } from '@/entrypoints/content/subtitle-mount';
+import { getCoordinatorState } from '@/entrypoints/content/orchestrator-coordinator';
 import { act } from 'react';
 import { fireEvent } from '@testing-library/react';
 import type { DubbingOrchestrator } from '@/types/domain';
@@ -160,6 +162,32 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     });
   });
 
+  it('stops the old Dub Track when the watch id changes but ytp-right-controls is reused', async () => {
+    window.history.pushState({}, '', '/watch?v=VIDEO_AAAA');
+    let instance: ReturnType<typeof tryMount> = null;
+    await act(async () => {
+      instance = tryMount();
+    });
+    expect(instance).not.toBeNull();
+
+    const destroy = vi.fn();
+    const state = getCoordinatorState();
+    state.activeVideoId = 'VIDEO_AAAA';
+    state.orchestrator = { destroy } as any;
+
+    window.history.pushState({}, '', '/watch?v=VIDEO_BBBB');
+    let remount: ReturnType<typeof tryMount> = null;
+    await act(async () => {
+      remount = tryMount();
+    });
+
+    expect(destroy).toHaveBeenCalled();
+    expect(getCoordinatorState().orchestrator).toBeNull();
+    expect(getCoordinatorState().activeVideoId).not.toBe('VIDEO_AAAA');
+    expect(remount).not.toBeNull();
+    expect(playerContainer.querySelector('[data-aetherdub-host]')).not.toBeNull();
+  });
+
   it('integrates Cyber Cockpit interactions and SubtitleOverlay with DubbingOrchestrator in Shadow DOM', async () => {
     const mockOrchestrator: DubbingOrchestrator = {
       init: vi.fn().mockResolvedValue(undefined),
@@ -189,6 +217,11 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
       destroy: vi.fn(),
     };
 
+    const moviePlayer = document.createElement('div');
+    moviePlayer.id = 'movie_player';
+    document.body.appendChild(moviePlayer);
+    const subInstance = mountSubtitleOverlay(moviePlayer);
+
     let instance: ReturnType<typeof mountHud> = null as any;
     await act(async () => {
       instance = mountHud(playerContainer, mockOrchestrator);
@@ -196,11 +229,16 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
 
     const shadowRoot = instance.shadowRoot;
 
-    // SubtitleOverlay should be visible in Shadow DOM with translated text
-    const subtitlePill = shadowRoot.querySelector('.subtitle-pill');
-    expect(subtitlePill).not.toBeNull();
-    expect(subtitlePill?.textContent).toContain('Xin chào thế giới');
-    expect(subtitlePill?.textContent).toContain('Hello world');
+    // Per ADR-0012: HUD shadowRoot does NOT render SubtitleOverlay (prevents in-controls clutter)
+    expect(shadowRoot.querySelector('.subtitle-pill')).toBeNull();
+
+    // The unified bilingual overlay inside #movie_player receives the active segment
+    await vi.waitFor(() => {
+      const subtitlePill = subInstance.shadowRoot.querySelector('.subtitle-pill');
+      expect(subtitlePill).not.toBeNull();
+      expect(subtitlePill?.textContent).toContain('Xin chào thế giới');
+      expect(subtitlePill?.textContent).toContain('Hello world');
+    });
 
     // Open Cockpit
     const triggerPill = shadowRoot.querySelector('.hyper-pill-trigger') as HTMLElement;
@@ -211,13 +249,11 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     const cockpit = shadowRoot.querySelector('.cyber-cockpit') as HTMLElement;
     expect(cockpit.classList.contains('open')).toBe(true);
 
-    // Language Selector
+    // Language Selector (locked to vi)
     const langSelect = shadowRoot.querySelector('.cyber-select') as HTMLSelectElement;
     expect(langSelect).not.toBeNull();
-    await act(async () => {
-      fireEvent.change(langSelect, { target: { value: 'en' } });
-    });
-    expect(mockOrchestrator.setTargetLanguage).toHaveBeenCalledWith('en');
+    expect(langSelect.value).toBe('vi');
+    expect(langSelect.disabled).toBe(true);
 
     // Voice Matrix Selection
     const namMinhCard = Array.from(shadowRoot.querySelectorAll('.voice-card')).find((card) =>
@@ -245,8 +281,8 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     });
     expect(mockOrchestrator.handlePause).toHaveBeenCalled();
 
-    // SubtitleOverlay should now be hidden because visible=false
-    expect(shadowRoot.querySelector('.subtitle-pill')).toBeNull();
+    // SubtitleOverlay should now be hidden
+    expect(subInstance.shadowRoot.querySelector('.subtitle-pill')).toBeNull();
 
     // Toggle On/Off Switch back ON -> resumes dubbing
     await act(async () => {

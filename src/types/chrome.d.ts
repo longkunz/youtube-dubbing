@@ -41,9 +41,28 @@ declare namespace chrome {
     };
   }
 
+  namespace tabs {
+    interface Tab {
+      id?: number;
+      url?: string;
+      active?: boolean;
+      windowId?: number;
+      [key: string]: unknown;
+    }
+    function query(
+      queryInfo: { active?: boolean; currentWindow?: boolean; [key: string]: unknown },
+      callback?: (result: Tab[]) => void
+    ): Promise<Tab[]> | void;
+    function sendMessage(
+      tabId: number,
+      message: unknown,
+      responseCallback?: (response: unknown) => void
+    ): Promise<unknown> | void;
+  }
+
   namespace action {
     const onClicked: {
-      addListener(callback: (tab?: unknown) => void): void;
+      addListener(callback: (tab?: chrome.tabs.Tab) => void): void;
     };
   }
 }

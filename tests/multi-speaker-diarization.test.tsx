@@ -4,8 +4,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 
 import type { Transcript, Segment, OrchestratorConfig } from '../src/types/domain';
-import { GeminiTranslationClient } from '../src/core/translation/gemini-client';
-import type { FetchFn } from '../src/core/translation/gemini-client';
 import { DubbingOrchestratorImpl, DubbingTtsClient } from '../src/core/orchestrator/dubbing-orchestrator';
 import { CyberCockpit } from '../src/components/CyberCockpit';
 import { HudContainer } from '../src/components/HudContainer';
@@ -29,80 +27,7 @@ function makeVideoElement(): HTMLVideoElement {
   return el;
 }
 
-function makeOkResponse(body: string) {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => ({
-      candidates: [
-        {
-          content: {
-            parts: [{ text: body }],
-          },
-        },
-      ],
-    }),
-  };
-}
-
 describe('Multi-Speaker Diarization & Dynamic Voice Switching', () => {
-  // -------------------------------------------------------------------------
-  // 1. GeminiTranslationClient with speakerGender enrichment
-  // -------------------------------------------------------------------------
-  describe('GeminiTranslationClient diarization', () => {
-    let mockFetch: ReturnType<typeof vi.fn<FetchFn>>;
-
-    beforeEach(() => {
-      mockFetch = vi.fn<FetchFn>();
-    });
-
-    it('enriches segments with speakerGender from Gemini response', async () => {
-      const responsePayload = {
-        translations: [
-          { id: 's1', translatedText: 'Xin chào anh', speakerGender: 'female' },
-          { id: 's2', translatedText: 'Chào em', speakerGender: 'male' },
-        ],
-      };
-      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(responsePayload)));
-
-      const client = new GeminiTranslationClient({ apiKey: 'test-key', fetchFn: mockFetch });
-      const segments: Segment[] = [
-        makeSegment({ id: 's1', sourceText: 'Hello sir' }),
-        makeSegment({ id: 's2', sourceText: 'Hello maam' }),
-      ];
-
-      const result = await client.translateSegments(segments, { targetLanguage: 'vi' });
-
-      expect(result).toHaveLength(2);
-      expect(result[0].translatedText).toBe('Xin chào anh');
-      expect(result[0].speakerGender).toBe('female');
-      expect(result[1].translatedText).toBe('Chào em');
-      expect(result[1].speakerGender).toBe('male');
-
-      // Verify prompt instructed diarization
-      const callArgs = mockFetch.mock.calls[0];
-      const requestBody = JSON.parse(callArgs[1]?.body as string);
-      const promptText = requestBody.contents[0].parts[0].text;
-      expect(promptText).toMatch(/speakerGender/i);
-    });
-
-    it('preserves existing speakerGender if model response omits speakerGender', async () => {
-      const responsePayload = {
-        translations: [
-          { id: 's1', translatedText: 'Xin chào' },
-        ],
-      };
-      mockFetch.mockResolvedValueOnce(makeOkResponse(JSON.stringify(responsePayload)));
-
-      const client = new GeminiTranslationClient({ apiKey: 'test-key', fetchFn: mockFetch });
-      const segments: Segment[] = [
-        makeSegment({ id: 's1', sourceText: 'Hello', speakerGender: 'female' }),
-      ];
-
-      const result = await client.translateSegments(segments);
-      expect(result[0].speakerGender).toBe('female');
-    });
-  });
 
   // -------------------------------------------------------------------------
   // 2. DubbingOrchestratorImpl voice resolution & sliding-window synthesis

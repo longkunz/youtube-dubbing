@@ -5,25 +5,22 @@ import React from 'react';
 import { HudContainer } from '@/components/HudContainer';
 
 describe('HudContainer target language wiring', () => {
-  it('passes the cockpit target language into onActivateDubbing', () => {
+  it('passes the locked Vietnamese target language into onActivateDubbing', () => {
     const onActivateDubbing = vi.fn();
     render(
       <HudContainer
         initialIsOpen={true}
-        initialTargetLanguage="ja"
+        initialTargetLanguage="vi"
         onActivateDubbing={onActivateDubbing}
       />,
     );
 
-    fireEvent.change(screen.getByRole('combobox', { name: /select target language|target language/i }), {
-      target: { value: 'es' },
-    });
     fireEvent.click(screen.getByTestId('pill-dub-toggle'));
 
-    expect(onActivateDubbing).toHaveBeenCalledWith('es');
+    expect(onActivateDubbing).toHaveBeenCalledWith('vi');
   });
 
-  it('notifies onTargetLanguageChange when the cockpit language changes', () => {
+  it('displays the locked Vietnamese target language in the cockpit', () => {
     const onTargetLanguageChange = vi.fn();
     render(
       <HudContainer
@@ -33,9 +30,8 @@ describe('HudContainer target language wiring', () => {
       />,
     );
 
-    fireEvent.change(screen.getByRole('combobox', { name: /select target language|target language/i }), {
-      target: { value: 'en' },
-    });
-    expect(onTargetLanguageChange).toHaveBeenCalledWith('en');
+    const select = screen.getByRole('combobox', { name: /select target language|target language/i });
+    expect(select).toHaveValue('vi');
+    expect(select).toBeDisabled();
   });
 });

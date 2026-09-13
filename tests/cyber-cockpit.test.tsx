@@ -38,7 +38,7 @@ describe('CyberCockpit', () => {
     expect(onToggleEnabled).toHaveBeenCalledWith(true);
   });
 
-  it('updates language and calls onSelectLanguage when selector changes', () => {
+  it('locks language to Vietnamese [vi] and disables selector', () => {
     const onSelectLanguage = vi.fn();
     render(
       <CyberCockpit
@@ -52,12 +52,7 @@ describe('CyberCockpit', () => {
     const select = screen.getByRole('combobox', { name: /select target language|target language/i });
     expect(select).toBeInTheDocument();
     expect(select).toHaveValue('vi');
-
-    fireEvent.change(select, { target: { value: 'en' } });
-    expect(onSelectLanguage).toHaveBeenCalledWith('en');
-
-    fireEvent.change(select, { target: { value: 'ja' } });
-    expect(onSelectLanguage).toHaveBeenCalledWith('ja');
+    expect(select).toBeDisabled();
   });
 
   it('updates active voice and calls onSelectVoice on click or keyboard', () => {
@@ -177,19 +172,72 @@ describe('CyberCockpit', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
   });
 
-  it('defaults the Engine badge to GEMINI-3.8-FLASH', () => {
+  it('defaults the Engine badge to ZEROTTS CPU', () => {
     render(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText('GEMINI-3.8-FLASH')).toBeInTheDocument();
+    expect(screen.getByText('ZEROTTS CPU')).toBeInTheDocument();
   });
 
   it('renders the configured engine label instead of the default', () => {
     const { rerender } = render(
-      <CyberCockpit isOpen={true} onClose={vi.fn()} engineLabel="GPT-4O-MINI" />
+      <CyberCockpit isOpen={true} onClose={vi.fn()} engineLabel="AETHERDUB-BACKEND" />
     );
-    expect(screen.getByText('GPT-4O-MINI')).toBeInTheDocument();
-    expect(screen.queryByText('GEMINI-3.8-FLASH')).not.toBeInTheDocument();
+    expect(screen.getByText('AETHERDUB-BACKEND')).toBeInTheDocument();
+    expect(screen.queryByText('ZEROTTS CPU')).not.toBeInTheDocument();
 
     rerender(<CyberCockpit isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText('GEMINI-3.8-FLASH')).toBeInTheDocument();
+    expect(screen.getByText('ZEROTTS CPU')).toBeInTheDocument();
+  });
+
+  it('renders backend offline banner and triggers onRetry when clicked', () => {
+    const onRetry = vi.fn();
+    render(
+      <CyberCockpit
+        isOpen={true}
+        onClose={vi.fn()}
+        isBackendOffline={true}
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.getByTestId('backend-offline-banner')).toBeInTheDocument();
+    expect(screen.getByText('BACKEND OFFLINE')).toBeInTheDocument();
+
+    const retryBtn = screen.getByTestId('backend-retry-btn');
+    fireEvent.click(retryBtn);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles dual subtitles switch and invokes onToggleSubtitles callback', () => {
+    const onToggleSubtitles = vi.fn();
+    const { rerender } = render(
+      <CyberCockpit
+        isOpen={true}
+        isSubtitlesEnabled={true}
+        onToggleSubtitles={onToggleSubtitles}
+        onClose={vi.fn()}
+      />
+    );
+
+    const toggle = screen.getByTestId('dual-subtitles-toggle');
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(toggle).toHaveTextContent('SUBS: ON');
+
+    fireEvent.click(toggle);
+    expect(onToggleSubtitles).toHaveBeenCalledWith(false);
+
+    rerender(
+      <CyberCockpit
+        isOpen={true}
+        isSubtitlesEnabled={false}
+        onToggleSubtitles={onToggleSubtitles}
+        onClose={vi.fn()}
+      />
+    );
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).toHaveTextContent('SUBS: OFF');
+
+    fireEvent.click(toggle);
+    expect(onToggleSubtitles).toHaveBeenCalledWith(true);
   });
 });

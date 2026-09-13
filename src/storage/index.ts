@@ -10,9 +10,15 @@ export {
   getSettings,
   saveSettings,
   resetSettingsForTesting,
-  pingGeminiConnection,
+  pingBackendConnection,
   DEFAULT_USER_SETTINGS,
 } from './settings';
-export type { UserSettings, TranslationProvider } from './settings';
-export { YOUTUBE_CAPTION_TRANSLATION } from './settings';
-
+export type {
+  UserSettings,
+  TranslationProvider,
+  TtsProvider,
+  SubtitleDisplayMode,
+  SubtitleLineOrder,
+  SubtitleFontSize,
+  PingBackendResult,
+} from './settings';

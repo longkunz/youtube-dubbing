@@ -2,16 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   getSettings,
   saveSettings,
-  pingGeminiConnection,
-  pingOpenAiConnection,
+  pingBackendConnection,
   DEFAULT_USER_SETTINGS,
-  DEFAULT_GEMINI_MODEL,
-  GEMINI_MODEL_PRESETS,
   type UserSettings,
-  type PingOpenAiResult,
+  type PingBackendResult,
   type TranslationProvider,
+  type TtsProvider,
+  type SubtitleDisplayMode,
+  type SubtitleLineOrder,
+  type SubtitleFontSize,
 } from '../../storage/settings';
-import { defaultFetch } from '../../core/default-fetch';
+import { sendExtensionMessage } from '../../core/extension-runtime';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
 import { BackgroundDubbingTtsClient } from '../../core/tts/background-tts-client';
 import {
@@ -30,28 +31,27 @@ import {
   Save,
   Trash2,
   CheckCircle2,
-  AlertTriangle,
   Sliders,
   Radio,
-  ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
+import { getActiveSubtitleInstance } from '../content/subtitle-mount';
 
-function isGeminiPreset(model: string): boolean {
-  return (GEMINI_MODEL_PRESETS as readonly string[]).includes(model);
+const COLOR_PRESETS = ['#ffffff', '#ffeb3b', '#00f2fe', '#00ff88', '#cbd5e1'];
+
+async function defaultResetTtsBreaker(): Promise<void> {
+  await sendExtensionMessage({ action: 'RESET_TTS_BREAKER' }, 5_000);
 }
 
 export interface OptionsDashboardProps {
   segmentCache?: SegmentCache;
-  pingFn?: (
-    apiKey: string,
-    model?: string,
-  ) => Promise<{ ok: boolean; latencyMs: number; error?: string }>;
-  pingOpenAiFn?: (
-    endpoint: string,
-    model: string,
-    apiKey?: string
-  ) => Promise<PingOpenAiResult>;
-  /** Injectable Edge-TTS client for the voice preview (defaults to background proxy). */
+  pingBackendFn?: (
+    url: string,
+    apiKey: string
+  ) => Promise<PingBackendResult>;
+  /** After a successful Self-hosted Ping, reset the worker TTS circuit breaker. */
+  resetTtsBreaker?: () => Promise<void>;
+  /** Injectable client for the voice preview (defaults to background proxy). */
   ttsPreviewClient?: {
     synthesize(
       text: string,
@@ -66,27 +66,30 @@ export type TtsPreviewPhase = 'idle' | 'synthesizing' | 'playing' | 'success' | 
 
 export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   segmentCache,
-  pingFn,
-  pingOpenAiFn,
+  pingBackendFn,
+  resetTtsBreaker,
   ttsPreviewClient,
   createPreviewAudio,
 }) => {
-  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('gemini');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
-  const [geminiModelIsCustom, setGeminiModelIsCustom] = useState(false);
-  const [openaiEndpoint, setOpenaiEndpoint] = useState('https://api.openai.com/v1');
-  const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
-  const [openaiApiKey, setOpenaiApiKey] = useState('');
-  const [groqApiKey, setGroqApiKey] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<'edge-tts' | 'web-speech'>('edge-tts');
+  const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8787');
+  const [backendApiKey, setBackendApiKey] = useState('');
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('zerotts');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
-  const [enableFallback, setEnableFallback] = useState(true);
+  const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<SubtitleDisplayMode>('bilingual');
+  const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('original-first');
+  const [subtitleFontSize, setSubtitleFontSize] = useState<SubtitleFontSize>('standard');
+  const [subtitleOriginalFontSize, setSubtitleOriginalFontSize] = useState<number>(18);
+  const [subtitleTranslatedFontSize, setSubtitleTranslatedFontSize] = useState<number>(15);
+  const [subtitleOriginalColor, setSubtitleOriginalColor] = useState<string>('#ffffff');
+  const [subtitleTranslatedColor, setSubtitleTranslatedColor] = useState<string>('#00f2fe');
+  const [subtitleBackgroundOpacity, setSubtitleBackgroundOpacity] = useState<number>(78);
+  const [subtitleTextShadow, setSubtitleTextShadow] = useState<boolean>(true);
+  const [subtitleAutoPause, setSubtitleAutoPause] = useState<boolean>(false);
+  const [subtitleHotkeysEnabled, setSubtitleHotkeysEnabled] = useState<boolean>(false);
+  const [resetPositionStatus, setResetPositionStatus] = useState<string | null>(null);
 
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-  const [showOpenAiKey, setShowOpenAiKey] = useState(false);
-  const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showBackendKey, setShowBackendKey] = useState(false);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [pingStatus, setPingStatus] = useState<{
@@ -104,6 +107,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const previewPlaybackRef = useRef<PreviewPlayback | null>(null);
   const previewRunIdRef = useRef(0);
 
+  // Ensure any active audio preview is stopped when unmounted
+  useEffect(() => {
+    return () => {
+      previewPlaybackRef.current?.stop();
+      previewPlaybackRef.current = null;
+    };
+  }, []);
+
   const cache = segmentCache ?? new SegmentCache();
 
   useEffect(() => {
@@ -111,19 +122,22 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
     getSettings().then((saved) => {
       if (!active) return;
-      setTranslationProvider(saved.translationProvider || 'gemini');
-      setGeminiApiKey(saved.geminiApiKey || '');
-      const loadedModel = saved.geminiModel || DEFAULT_GEMINI_MODEL;
-      setGeminiModel(loadedModel);
-      setGeminiModelIsCustom(!isGeminiPreset(loadedModel));
-      setOpenaiEndpoint(saved.openaiEndpoint || 'https://api.openai.com/v1');
-      setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
-      setOpenaiApiKey(saved.openaiApiKey || '');
-      setGroqApiKey(saved.groqApiKey || '');
-      setTtsProvider(saved.ttsProvider || 'edge-tts');
+      setBackendUrl(saved.backendUrl || 'http://127.0.0.1:8787');
+      setBackendApiKey(saved.backendApiKey || '');
+      setTtsProvider(saved.ttsProvider || 'zerotts');
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
-      setEnableFallback(saved.enableFallback ?? true);
+      setSubtitleDisplayMode(saved.subtitleDisplayMode || 'bilingual');
+      setSubtitleLineOrder(saved.subtitleLineOrder || 'original-first');
+      setSubtitleFontSize(saved.subtitleFontSize || 'standard');
+      setSubtitleOriginalFontSize(saved.subtitleOriginalFontSize ?? 18);
+      setSubtitleTranslatedFontSize(saved.subtitleTranslatedFontSize ?? 15);
+      setSubtitleOriginalColor(saved.subtitleOriginalColor ?? '#ffffff');
+      setSubtitleTranslatedColor(saved.subtitleTranslatedColor ?? '#00f2fe');
+      setSubtitleBackgroundOpacity(saved.subtitleBackgroundOpacity ?? 78);
+      setSubtitleTextShadow(saved.subtitleTextShadow ?? true);
+      setSubtitleAutoPause(saved.subtitleAutoPause ?? false);
+      setSubtitleHotkeysEnabled(saved.subtitleHotkeysEnabled ?? false);
     });
 
     const loadMetrics = async () => {
@@ -147,50 +161,70 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
     };
   }, [segmentCache]);
 
+  const handleResetSubtitlePosition = async () => {
+    await saveSettings({ subtitlePosition: null });
+    const activeInst = getActiveSubtitleInstance();
+    if (activeInst) {
+      activeInst.resetPosition();
+    }
+    setResetPositionStatus('Position reset');
+    setTimeout(() => {
+      setResetPositionStatus(null);
+    }, 2500);
+  };
+
   const handleSaveCredentials = async () => {
     await saveSettings({
-      translationProvider,
-      geminiApiKey: geminiApiKey.trim(),
-      geminiModel: geminiModel.trim() || DEFAULT_GEMINI_MODEL,
-      openaiEndpoint,
-      openaiModel,
-      openaiApiKey,
-      groqApiKey: groqApiKey.trim(),
+      translationProvider: 'self-hosted',
+      targetLanguage: 'vi',
+      backendUrl,
+      backendApiKey: backendApiKey.trim(),
       ttsProvider,
       ttsPitch,
       ttsRate,
-      enableFallback,
+      subtitleDisplayMode,
+      subtitleLineOrder,
+      subtitleFontSize,
+      subtitleOriginalFontSize,
+      subtitleTranslatedFontSize,
+      subtitleOriginalColor,
+      subtitleTranslatedColor,
+      subtitleBackgroundOpacity,
+      subtitleTextShadow,
+      subtitleAutoPause,
+      subtitleHotkeysEnabled,
     });
     setSaveStatus('Credentials saved');
     setTimeout(() => {
       setSaveStatus(null);
-    }, 3500);
+    }, 3000);
   };
 
   const handlePing = async () => {
     setPingStatus({ loading: true });
     try {
-      if (translationProvider === 'openai-compatible') {
-        const pingExecutor = pingOpenAiFn ?? pingOpenAiConnection;
-        const res = await pingExecutor(openaiEndpoint, openaiModel, openaiApiKey);
-        setPingStatus({ loading: false, result: res });
-      } else {
-        const resolvedModel = geminiModel.trim() || DEFAULT_GEMINI_MODEL;
-        const res = pingFn
-          ? await pingFn(geminiApiKey, resolvedModel)
-          : await pingGeminiConnection(
-              geminiApiKey,
-              defaultFetch as typeof fetch,
-              resolvedModel,
-            );
-        setPingStatus({ loading: false, result: res });
+      const pingImpl = pingBackendFn ?? pingBackendConnection;
+      const result = await pingImpl(backendUrl, backendApiKey.trim());
+      setPingStatus({
+        loading: false,
+        result: {
+          ok: result.ok,
+          latencyMs: result.latencyMs,
+          error: result.error,
+        },
+      });
+
+      if (result.ok) {
+        const resetBreaker = resetTtsBreaker ?? defaultResetTtsBreaker;
+        resetBreaker().catch((err) => {
+          console.warn('[AetherDub] Failed to reset worker TTS breaker:', err);
+        });
       }
     } catch (err) {
       setPingStatus({
         loading: false,
         result: {
           ok: false,
-          latencyMs: 0,
           error: err instanceof Error ? err.message : String(err),
         },
       });
@@ -198,58 +232,39 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   };
 
   const handlePurgeCache = async () => {
+    if (isPurging) return;
     setIsPurging(true);
     try {
-      await cache.purgeAll();
+      await cache.purge();
       const updated = await cache.getStorageUsage();
       setStorageUsage(updated);
+    } catch (err) {
+      console.error('[AetherDub] Purge cache failed:', err);
     } finally {
       setIsPurging(false);
     }
   };
 
-  const stopTtsPreview = () => {
-    previewRunIdRef.current += 1;
-    previewPlaybackRef.current?.stop();
-    previewPlaybackRef.current = null;
-  };
-
-  // Stop any in-flight preview when the dashboard unmounts.
-  useEffect(() => {
-    return () => {
-      previewPlaybackRef.current?.stop();
-      previewPlaybackRef.current = null;
-    };
-  }, []);
-
-  /**
-   * End-to-end Edge-TTS check: synthesize a short Vietnamese sample through
-   * the background service worker and actually play it back. If the user
-   * hears the voice, Edge TTS synthesis + delivery + audio output all work.
-   */
   const handlePreviewVoice = async () => {
-    // Clicking while playing stops the current preview.
-    if (ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing') {
-      stopTtsPreview();
+    if (previewPlaybackRef.current) {
+      previewPlaybackRef.current.stop();
+      previewPlaybackRef.current = null;
       setTtsPreview({ phase: 'idle' });
       return;
     }
 
-    const runId = previewRunIdRef.current + 1;
-    previewRunIdRef.current = runId;
+    const runId = ++previewRunIdRef.current;
     setTtsPreview({ phase: 'synthesizing' });
 
     try {
       const client = ttsPreviewClient ?? new BackgroundDubbingTtsClient();
       const blob = await client.synthesize(TTS_PREVIEW_TEXT, {
-        voice: 'vi-VN-HoaiMyNeural',
+        voice: 'maichi',
         pitch: ttsPitch,
         rate: ttsRate,
       });
+
       if (previewRunIdRef.current !== runId) return;
-      if (!blob || blob.size === 0) {
-        throw new Error('Edge TTS returned empty audio');
-      }
 
       const playback = playAudioBlob(
         blob,
@@ -264,7 +279,6 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
     } catch (err) {
       if (previewRunIdRef.current !== runId) return;
       const message = err instanceof Error ? err.message : String(err);
-      // User-initiated stop is not an error.
       if (/stopped by user/i.test(message)) return;
       previewPlaybackRef.current = null;
       setTtsPreview({ phase: 'error', detail: message });
@@ -289,7 +303,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
               </h1>
             </div>
             <p className="text-xs font-mono text-gray-400 mt-1 uppercase tracking-widest">
-              Operations Deck // Neural Dubbing & Sub-Atomic Cache Subsystems
+              Operations Deck // Strict Self-Hosted Backend Subsystems
             </p>
           </div>
 
@@ -322,235 +336,79 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </h2>
               </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00f2fe]/10 text-[#00f2fe] border border-[#00f2fe]/30">
-                BYOK CREDENTIALS
+                BACKEND CONNECTION
               </span>
             </div>
 
             <div className="space-y-5">
-              {/* Translation Provider Selector */}
+              {/* Translation Provider Info */}
               <div>
-                <label
-                  htmlFor="translation-provider-select"
-                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                >
-                  Translation Provider
+                <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                  Translation Engine
                 </label>
-                <select
-                  id="translation-provider-select"
-                  aria-label="Translation Provider"
-                  value={translationProvider}
-                  onChange={(e) =>
-                    setTranslationProvider(e.target.value as TranslationProvider)
-                  }
-                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                >
-                  <option value="openai-compatible">OpenAI-Compatible Proxy (/v1/chat/completions)</option>
-                  <option value="gemini">Google Gemini (Direct REST)</option>
-                  <option value="youtube-caption-translation">YouTube Caption Translation</option>
-                </select>
+                <div className="w-full bg-[#05070e] border border-[#00f2fe]/40 rounded-lg px-3.5 py-2.5 text-sm font-mono text-[#00f2fe]">
+                  Self-hosted Backend (MarianMT EN→VI)
+                </div>
               </div>
 
-              {translationProvider === 'youtube-caption-translation' ? (
-                <p className="text-xs font-mono text-gray-400 leading-relaxed">
-                  Uses a target-language YouTube Caption Track when available, otherwise YouTube
-                  machine translation of a translatable source track. No Gemini API key required.
-                </p>
-              ) : translationProvider === 'openai-compatible' ? (
-                <>
-                  {/* OpenAI Proxy Endpoint URL */}
-                  <div>
-                    <label
-                      htmlFor="openai-endpoint"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Proxy Endpoint URL
-                    </label>
-                    <input
-                      id="openai-endpoint"
-                      data-testid="openai-endpoint-input"
-                      type="text"
-                      value={openaiEndpoint}
-                      onChange={(e) => setOpenaiEndpoint(e.target.value)}
-                      placeholder="https://api.openai.com/v1"
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    />
-                  </div>
-
-                  {/* OpenAI Model Identifier */}
-                  <div>
-                    <label
-                      htmlFor="openai-model"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Model Identifier
-                    </label>
-                    <input
-                      id="openai-model"
-                      data-testid="openai-model-input"
-                      type="text"
-                      value={openaiModel}
-                      onChange={(e) => setOpenaiModel(e.target.value)}
-                      placeholder="gpt-4o-mini"
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    />
-                  </div>
-
-                  {/* OpenAI Proxy API Key (Optional) */}
-                  <div>
-                    <label
-                      htmlFor="openai-key"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      API Key (Optional)
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        id="openai-key"
-                        data-testid="openai-key-input"
-                        type={showOpenAiKey ? 'text' : 'password'}
-                        value={openaiApiKey}
-                        onChange={(e) => setOpenaiApiKey(e.target.value)}
-                        placeholder="sk-... (leave empty if proxy requires no key)"
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Toggle OpenAI API Key visibility"
-                        onClick={() => setShowOpenAiKey((prev) => !prev)}
-                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                      >
-                        {showOpenAiKey ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label
-                      htmlFor="gemini-model"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Gemini Model
-                    </label>
-                    <select
-                      id="gemini-model"
-                      data-testid="gemini-model-select"
-                      aria-label="Gemini Model"
-                      value={geminiModelIsCustom ? 'custom' : geminiModel}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (next === 'custom') {
-                          setGeminiModelIsCustom(true);
-                        } else {
-                          setGeminiModelIsCustom(false);
-                          setGeminiModel(next);
-                        }
-                      }}
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    >
-                      {GEMINI_MODEL_PRESETS.map((preset) => (
-                        <option key={preset} value={preset}>
-                          {preset}
-                        </option>
-                      ))}
-                      <option value="custom">custom</option>
-                    </select>
-                  </div>
-
-                  {geminiModelIsCustom ? (
-                    <div>
-                      <label
-                        htmlFor="gemini-model-custom"
-                        className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                      >
-                        Custom Model Identifier
-                      </label>
-                      <input
-                        id="gemini-model-custom"
-                        data-testid="gemini-model-custom-input"
-                        type="text"
-                        value={geminiModel}
-                        onChange={(e) => setGeminiModel(e.target.value)}
-                        placeholder="gemini-..."
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                      />
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <label
-                      htmlFor="gemini-key"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Gemini API Key (Primary Dubbing Engine)
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        id="gemini-key"
-                        data-testid="gemini-key-input"
-                        type={showGeminiKey ? 'text' : 'password'}
-                        value={geminiApiKey}
-                        onChange={(e) => setGeminiApiKey(e.target.value)}
-                        placeholder="AIzaSy..."
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Toggle Gemini API Key visibility"
-                        onClick={() => setShowGeminiKey((prev) => !prev)}
-                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                      >
-                        {showGeminiKey ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Groq / OpenAI API Key */}
+              {/* Self-hosted Backend URL */}
               <div>
                 <label
-                  htmlFor="groq-key"
+                  htmlFor="backend-url"
                   className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
                 >
-                  Groq API Key (Whisper STT fallback when captions fail)
+                  Backend URL
+                </label>
+                <input
+                  id="backend-url"
+                  aria-label="Backend URL"
+                  data-testid="backend-url-input"
+                  type="text"
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:8787"
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                />
+              </div>
+
+              {/* Self-hosted Backend API Key */}
+              <div>
+                <label
+                  htmlFor="backend-key"
+                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                >
+                  Backend API Key
                 </label>
                 <div className="relative flex items-center">
                   <input
-                    id="groq-key"
-                    data-testid="groq-key-input"
-                    type={showGroqKey ? 'text' : 'password'}
-                    value={groqApiKey}
-                    onChange={(e) => setGroqApiKey(e.target.value)}
-                    placeholder="gsk_... or sk-..."
+                    id="backend-key"
+                    aria-label="Backend API Key"
+                    data-testid="backend-key-input"
+                    type={showBackendKey ? 'text' : 'password'}
+                    value={backendApiKey}
+                    onChange={(e) => setBackendApiKey(e.target.value)}
+                    placeholder="BACKEND_API_KEY from the Docker host .env"
                     className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
                   />
                   <button
                     type="button"
-                    aria-label="Toggle Groq API Key visibility"
-                    onClick={() => setShowGroqKey((prev) => !prev)}
+                    aria-label="Toggle Backend API Key visibility"
+                    onClick={() => setShowBackendKey((prev) => !prev)}
                     className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
                   >
-                    {showGroqKey ? (
+                    {showBackendKey ? (
                       <EyeOff className="w-4 h-4" />
                     ) : (
                       <Eye className="w-4 h-4" />
                     )}
                   </button>
                 </div>
-                <p className="mt-2 text-[11px] text-gray-500 font-mono leading-relaxed">
-                  Used only after YouTube captions fail. Does not enable Netflix, lip-sync, or paid TTS.
-                </p>
               </div>
+
+              <p className="text-xs font-mono text-gray-400 leading-relaxed">
+                Dedicated Self-hosted Backend for EN→VI MarianMT translation and real-time ZeroTTS synthesis (~70ms TTFA).
+                No external cloud API keys or fallbacks required.
+              </p>
 
               {/* Action Buttons & Ping Badge */}
               <div className="pt-3 flex flex-wrap items-center justify-between gap-4">
@@ -558,16 +416,17 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   <button
                     type="button"
                     onClick={handleSaveCredentials}
+                    data-testid="save-credentials-btn"
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#00f2fe]/80 to-[#7928ca]/80 hover:from-[#00f2fe] hover:to-[#7928ca] text-white font-mono text-xs font-semibold uppercase tracking-wider transition-all duration-150 cursor-pointer shadow-[0_0_15px_rgba(0,242,254,0.3)]"
                   >
                     <Save className="w-3.5 h-3.5" />
                     Save Credentials
                   </button>
 
-                  {translationProvider !== 'youtube-caption-translation' ? (
                   <button
                     type="button"
                     aria-label="Ping Connection (Test Connection)"
+                    data-testid="test-connection-btn"
                     onClick={handlePing}
                     disabled={pingStatus?.loading}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer disabled:opacity-50"
@@ -575,7 +434,6 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                     <Activity className={`w-3.5 h-3.5 ${pingStatus?.loading ? 'animate-spin' : ''}`} />
                     Test Connection
                   </button>
-                  ) : null}
                 </div>
 
                 {/* Ping Result Badge */}
@@ -620,15 +478,19 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </label>
                 <select
                   id="tts-provider-select"
+                  data-testid="tts-provider-select"
                   aria-label="Select TTS Engine Provider"
                   value={ttsProvider}
-                  onChange={(e) =>
-                    setTtsProvider(e.target.value as 'edge-tts' | 'web-speech')
-                  }
+                  onChange={(e) => {
+                    const next = e.target.value as TtsProvider;
+                    setTtsProvider(next);
+                    void saveSettings({ ttsProvider: next });
+                  }}
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#ff007a] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#ff007a] transition-all"
                 >
-                  <option value="edge-tts">Edge Neural TTS (Zero-Config Default)</option>
-                  <option value="web-speech">Web Speech API (Local Fallback)</option>
+                  <option value="zerotts">ZeroTTS CPU (Real-Time ~70ms TTFA)</option>
+                  <option value="piper">Piper Neural (Backend Local)</option>
+                  <option value="edge">Edge Neural TTS (Backend Host)</option>
                 </select>
               </div>
 
@@ -643,6 +505,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   </label>
                   <input
                     id="pitch-input"
+                    data-testid="pitch-input"
                     type="text"
                     value={ttsPitch}
                     onChange={(e) => setTtsPitch(e.target.value)}
@@ -659,6 +522,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   </label>
                   <input
                     id="rate-input"
+                    data-testid="rate-input"
                     type="text"
                     value={ttsRate}
                     onChange={(e) => setTtsRate(e.target.value)}
@@ -668,28 +532,10 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Fallback Checkbox */}
-              <div className="flex items-center gap-2 pt-2">
-                <input
-                  id="enable-fallback"
-                  type="checkbox"
-                  checked={enableFallback}
-                  onChange={(e) => setEnableFallback(e.target.checked)}
-                  className="rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] bg-[#05070e]"
-                />
-                <label
-                  htmlFor="enable-fallback"
-                  className="text-xs font-mono text-gray-300 cursor-pointer select-none"
-                >
-                  Enable Web Speech API Fallback upon Edge-TTS Failure
-                </label>
-              </div>
-
-              {/* Edge-TTS Voice Preview */}
+              {/* ZeroTTS Voice Preview */}
               <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-800">
                 <p className="text-xs font-sans text-gray-400 max-w-md">
-                  Synthesizes a short Vietnamese sample through Edge TTS and plays it back.
-                  If you hear the voice, synthesis and audio output both work.
+                  Synthesizes a short Vietnamese sample through ZeroTTS and plays it back.
                 </p>
                 <div className="flex items-center gap-3">
                   {ttsPreview.phase === 'success' && (
@@ -709,10 +555,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   )}
                   <button
                     type="button"
+                    data-testid="tts-preview-btn"
                     aria-label={
                       ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing'
                         ? 'Stop preview'
-                        : 'Preview Edge TTS voice'
+                        : 'Preview ZeroTTS voice'
                     }
                     onClick={handlePreviewVoice}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#ff007a]/40 hover:border-[#ff007a] bg-[#ff007a]/10 hover:bg-[#ff007a]/20 text-[#ff007a] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
@@ -727,7 +574,488 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
             </div>
           </section>
 
-          {/* Section 3: Sub-atomic Cache Vault */}
+          {/* Section 3: Parallel Caption Overlay */}
+          <section className="relative rounded-xl border border-[#00f2fe]/30 bg-[#0a0e1a]/85 backdrop-blur-xl p-6 shadow-[0_0_24px_rgba(0,242,254,0.08)]">
+            <div className="flex items-center justify-between border-b border-[#00f2fe]/20 pb-3 mb-6">
+              <div className="flex items-center gap-2.5">
+                <Sliders className="w-5 h-5 text-[#00f2fe]" />
+                <h2 className="text-lg font-mono font-bold tracking-wide text-white">
+                  PARALLEL CAPTION OVERLAY
+                </h2>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00f2fe]/10 text-[#00f2fe] border border-[#00f2fe]/30">
+                DUAL SUBTITLES
+              </span>
+            </div>
+
+            <div className="space-y-6">
+              {/* Primary Selectors: Display Mode, Line Order, Font Size Scale */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div>
+                  <label
+                    htmlFor="subtitle-display-mode"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Display Mode
+                  </label>
+                  <select
+                    id="subtitle-display-mode"
+                    data-testid="subtitle-display-mode-select"
+                    aria-label="Subtitle Display Mode"
+                    value={subtitleDisplayMode}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleDisplayMode;
+                      setSubtitleDisplayMode(next);
+                      void saveSettings({ subtitleDisplayMode: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="bilingual">Bilingual (Both)</option>
+                    <option value="translated-only">Translated Only</option>
+                    <option value="original-only">Original Only</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="subtitle-line-order"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Line Order
+                  </label>
+                  <select
+                    id="subtitle-line-order"
+                    data-testid="subtitle-line-order-select"
+                    aria-label="Subtitle Line Order"
+                    value={subtitleLineOrder}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleLineOrder;
+                      setSubtitleLineOrder(next);
+                      void saveSettings({ subtitleLineOrder: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="original-first">Original First (Top)</option>
+                    <option value="translated-first">Translated First (Top)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="subtitle-font-size"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Preset Scale
+                  </label>
+                  <select
+                    id="subtitle-font-size"
+                    data-testid="subtitle-font-size-select"
+                    aria-label="Subtitle Font Size"
+                    value={subtitleFontSize}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleFontSize;
+                      setSubtitleFontSize(next);
+                      void saveSettings({ subtitleFontSize: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="small">Small (14px)</option>
+                    <option value="standard">Standard (18px)</option>
+                    <option value="large">Large (22px)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Granular Font Size Sliders */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="original-font-size-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      English Font Size
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleOriginalFontSize}px
+                    </span>
+                  </div>
+                  <input
+                    id="original-font-size-slider"
+                    data-testid="original-font-size-slider"
+                    aria-label="English Font Size"
+                    type="range"
+                    min={12}
+                    max={36}
+                    step={1}
+                    value={subtitleOriginalFontSize}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleOriginalFontSize(next);
+                      void saveSettings({ subtitleOriginalFontSize: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>12px</span>
+                    <span>Default: 18px</span>
+                    <span>36px</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="translated-font-size-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      Vietnamese Font Size
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleTranslatedFontSize}px
+                    </span>
+                  </div>
+                  <input
+                    id="translated-font-size-slider"
+                    data-testid="translated-font-size-slider"
+                    aria-label="Vietnamese Font Size"
+                    type="range"
+                    min={10}
+                    max={30}
+                    step={1}
+                    value={subtitleTranslatedFontSize}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleTranslatedFontSize(next);
+                      void saveSettings({ subtitleTranslatedFontSize: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>10px</span>
+                    <span>Default: 15px</span>
+                    <span>30px</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Color Presets & Hex Pickers */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                    English Text Color
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {COLOR_PRESETS.map((color) => (
+                      <button
+                        key={`orig-${color}`}
+                        type="button"
+                        data-testid={`original-color-preset-${color}`}
+                        aria-label={`Select English color ${color}`}
+                        onClick={() => {
+                          setSubtitleOriginalColor(color);
+                          void saveSettings({ subtitleOriginalColor: color });
+                        }}
+                        className={`w-6 h-6 rounded-full border transition-all cursor-pointer ${
+                          subtitleOriginalColor.toLowerCase() === color.toLowerCase()
+                            ? 'border-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.8)]'
+                            : 'border-gray-600 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      data-testid="original-color-picker"
+                      aria-label="Custom English Text Color"
+                      value={subtitleOriginalColor}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSubtitleOriginalColor(val);
+                        void saveSettings({ subtitleOriginalColor: val });
+                      }}
+                      className="w-7 h-7 rounded border border-gray-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <span className="text-xs font-mono text-gray-400 uppercase">
+                      {subtitleOriginalColor}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                    Vietnamese Text Color
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {COLOR_PRESETS.map((color) => (
+                      <button
+                        key={`trans-${color}`}
+                        type="button"
+                        data-testid={`translated-color-preset-${color}`}
+                        aria-label={`Select Vietnamese color ${color}`}
+                        onClick={() => {
+                          setSubtitleTranslatedColor(color);
+                          void saveSettings({ subtitleTranslatedColor: color });
+                        }}
+                        className={`w-6 h-6 rounded-full border transition-all cursor-pointer ${
+                          subtitleTranslatedColor.toLowerCase() === color.toLowerCase()
+                            ? 'border-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.8)]'
+                            : 'border-gray-600 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      data-testid="translated-color-picker"
+                      aria-label="Custom Vietnamese Text Color"
+                      value={subtitleTranslatedColor}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSubtitleTranslatedColor(val);
+                        void saveSettings({ subtitleTranslatedColor: val });
+                      }}
+                      className="w-7 h-7 rounded border border-gray-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <span className="text-xs font-mono text-gray-400 uppercase">
+                      {subtitleTranslatedColor}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Background Opacity & Text Shadow Toggle */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="bg-opacity-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      Background Opacity
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleBackgroundOpacity}%
+                    </span>
+                  </div>
+                  <input
+                    id="bg-opacity-slider"
+                    data-testid="bg-opacity-slider"
+                    aria-label="Background Opacity"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={subtitleBackgroundOpacity}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleBackgroundOpacity(next);
+                      void saveSettings({ subtitleBackgroundOpacity: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>0% (Transparent)</span>
+                    <span>Default: 78%</span>
+                    <span>100% (Solid)</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center">
+                  <label className="flex items-center gap-3 p-3 w-full rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="text-shadow-toggle"
+                      aria-label="High Contrast Text Shadow"
+                      checked={subtitleTextShadow}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleTextShadow(next);
+                        void saveSettings({ subtitleTextShadow: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        High Contrast Text Shadow
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        Outlines text for readability across bright backgrounds
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Live Subtitle Preview */}
+              <div className="pt-4 border-t border-gray-800/80">
+                <div className="text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                  Live Subtitle Preview
+                </div>
+                <div className="relative rounded-lg bg-[#05070e] border border-gray-800 p-6 flex flex-col items-center justify-center min-h-[140px] overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-gray-900/40 via-transparent to-black/60 pointer-events-none" />
+                  <div
+                    data-testid="subtitle-live-preview"
+                    className="relative z-10 transition-all duration-150 text-center"
+                    style={{
+                      background: `rgba(0, 0, 0, ${subtitleBackgroundOpacity / 100})`,
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      borderRadius: '6px',
+                      padding: '8px 16px',
+                      maxWidth: '90%',
+                      border: subtitleBackgroundOpacity === 0 ? 'none' : '1px solid rgba(255, 255, 255, 0.12)',
+                      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)',
+                      display: 'inline-flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '3px',
+                    }}
+                  >
+                    {subtitleLineOrder === 'original-first' ? (
+                      <>
+                        <div
+                          style={{
+                            fontSize: `${subtitleOriginalFontSize}px`,
+                            color: subtitleOriginalColor,
+                            fontWeight: 600,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          The quick brown fox jumps over the lazy dog.
+                        </div>
+                        <div
+                          style={{
+                            fontSize: `${subtitleTranslatedFontSize}px`,
+                            color: subtitleTranslatedColor,
+                            fontWeight: 500,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          Con cáo nâu nhanh nhẹn nhảy qua con chó lười biếng.
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            fontSize: `${subtitleTranslatedFontSize}px`,
+                            color: subtitleTranslatedColor,
+                            fontWeight: 600,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          Con cáo nâu nhanh nhẹn nhảy qua con chó lười biếng.
+                        </div>
+                        <div
+                          style={{
+                            fontSize: `${subtitleOriginalFontSize}px`,
+                            color: subtitleOriginalColor,
+                            fontWeight: 500,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          The quick brown fox jumps over the lazy dog.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Learning Suite Controls */}
+              <div className="pt-4 border-t border-gray-800/80 space-y-3">
+                <div className="text-xs font-mono text-[#00f2fe] uppercase tracking-wider">
+                  Language Learning Suite
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="auto-pause-toggle"
+                      aria-label="Auto-Pause at end of subtitle (Shadowing Mode)"
+                      checked={subtitleAutoPause}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleAutoPause(next);
+                        void saveSettings({ subtitleAutoPause: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        Auto-Pause at end of subtitle (Shadowing Mode)
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        Pauses at segment end for shadowing and repetition
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="hotkeys-toggle"
+                      aria-label="Subtitle Navigation Hotkeys (A: Prev, S: Replay, D: Next)"
+                      checked={subtitleHotkeysEnabled}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleHotkeysEnabled(next);
+                        void saveSettings({ subtitleHotkeysEnabled: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        Subtitle Navigation Hotkeys (A: Prev, S: Replay, D: Next)
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        A: Prev segment, S: Replay current, D: Next segment
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Row for Reset Subtitle Position */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-gray-800/80">
+                <p className="text-xs font-sans text-gray-400 max-w-md">
+                  Reposition subtitles freely by dragging the on-screen pill. Double-click the pill or tap reset below to return to the default bottom docking.
+                </p>
+                <div className="flex items-center gap-3">
+                  {resetPositionStatus && (
+                    <span className="px-3 py-1 rounded border border-[#00ff88]/60 bg-[#00ff88]/15 text-[#00ff88] font-mono text-xs font-bold shadow-[0_0_10px_rgba(0,255,136,0.3)] animate-in fade-in">
+                      {resetPositionStatus}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="reset-subtitle-position-btn"
+                    aria-label="Reset Subtitle Position"
+                    onClick={handleResetSubtitlePosition}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset Subtitle Position
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 4: Sub-atomic Cache Vault */}
           <section className="relative rounded-xl border border-[#00ff88]/30 bg-[#0a0e1a]/85 backdrop-blur-xl p-6 shadow-[0_0_24px_rgba(0,255,136,0.08)]">
             <div className="flex items-center justify-between border-b border-[#00ff88]/20 pb-3 mb-6">
               <div className="flex items-center gap-2.5">
@@ -745,14 +1073,20 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-lg bg-[#05070e] border border-gray-800">
                   <div className="text-xs font-mono text-gray-400 uppercase">Cached Videos</div>
-                  <div className="text-xl font-mono font-bold text-[#00ff88] mt-1">
+                  <div
+                    data-testid="cache-videos-count"
+                    className="text-xl font-mono font-bold text-[#00ff88] mt-1"
+                  >
                     {videoCountLabel}
                   </div>
                 </div>
 
                 <div className="p-4 rounded-lg bg-[#05070e] border border-gray-800">
                   <div className="text-xs font-mono text-gray-400 uppercase">Storage Consumed</div>
-                  <div className="text-xl font-mono font-bold text-[#00f2fe] mt-1">
+                  <div
+                    data-testid="cache-bytes-count"
+                    className="text-xl font-mono font-bold text-[#00f2fe] mt-1"
+                  >
                     {totalMB} MB
                   </div>
                 </div>
@@ -764,6 +1098,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </p>
                 <button
                   type="button"
+                  data-testid="purge-cache-btn"
                   onClick={handlePurgeCache}
                   disabled={isPurging}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#ff007a]/50 hover:border-[#ff007a] bg-[#ff007a]/15 hover:bg-[#ff007a]/25 text-[#ff007a] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer disabled:opacity-50"
