@@ -83,7 +83,7 @@ describe('Parallel Caption Overlay Mount & Encapsulation', () => {
     });
   });
 
-  it('renders clean bilingual subtitle pill with rgba(8, 8, 8, 0.84) background and white text', async () => {
+  it('renders clean bilingual subtitle pill with rgba(0, 0, 0, 0.78) background and white text', async () => {
     const instance = mountSubtitleOverlay(moviePlayer, {
       segment: sampleSegment,
       visible: true,
@@ -95,7 +95,7 @@ describe('Parallel Caption Overlay Mount & Encapsulation', () => {
 
     const pill = shadowRoot.querySelector('.subtitle-pill') as HTMLElement;
     expect(pill).not.toBeNull();
-    expect(pill.style.background).toBe('rgba(8, 8, 8, 0.84)');
+    expect(pill.style.background).toBe('rgba(0, 0, 0, 0.78)');
     expect(pill.style.color).toBe('rgb(255, 255, 255)');
 
     const translatedEl = shadowRoot.querySelector('.subtitle-translated');
@@ -176,18 +176,18 @@ describe('Parallel Caption Overlay Mount & Encapsulation', () => {
 
     const host = moviePlayer.querySelector('[data-aetherdub-subtitle-host="true"]') as HTMLElement;
     const shadowRoot = host.shadowRoot!;
-    const translatedEl = shadowRoot.querySelector('.subtitle-translated') as HTMLElement;
-    expect(translatedEl.style.fontSize).toBe('14px');
+    const originalEl = shadowRoot.querySelector('.subtitle-original') as HTMLElement;
+    expect(originalEl.style.fontSize).toBe('14px');
 
     await act(async () => {
       instance.updateProps({ fontSizeScale: 'standard' });
     });
-    expect(translatedEl.style.fontSize).toBe('18px');
+    expect(originalEl.style.fontSize).toBe('18px');
 
     await act(async () => {
       instance.updateProps({ fontSizeScale: 'large' });
     });
-    expect(translatedEl.style.fontSize).toBe('22px');
+    expect(originalEl.style.fontSize).toBe('22px');
   });
 
   it('suppresses native CC (.ytp-caption-window-bottom) when visible, restoring it when hidden or unmounted', async () => {

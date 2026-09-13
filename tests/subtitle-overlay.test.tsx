@@ -15,15 +15,15 @@ describe('SubtitleOverlay', () => {
     translatedText: 'Xin chào thế giới, chào mừng đến với kênh!',
   };
 
-  it('renders translated text with rgba(8, 8, 8, 0.84) background and crisp white text', () => {
+  it('renders subtitle pill with rgba(0, 0, 0, 0.78) background per ADR-0015', () => {
     const { container } = render(<SubtitleOverlay segment={sampleSegment} visible={true} />);
 
     const pill = container.querySelector('.subtitle-pill') as HTMLElement;
     expect(pill).not.toBeNull();
     expect(pill.textContent).toContain('Xin chào thế giới, chào mừng đến với kênh!');
 
-    // Check YouTube CC styling requirements per ADR-0005/0006
-    expect(pill.style.background).toBe('rgba(8, 8, 8, 0.84)');
+    // Check Subtitle CC styling requirements per ADR-0015
+    expect(pill.style.background).toBe('rgba(0, 0, 0, 0.78)');
     expect(pill.style.color).toBe('rgb(255, 255, 255)');
   });
 

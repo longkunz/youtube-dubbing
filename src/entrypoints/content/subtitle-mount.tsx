@@ -7,15 +7,17 @@ import {
   type SubtitleDisplayMode,
   type SubtitleLineOrder,
   type SubtitleFontSize,
+  type SubtitlePosition,
 } from '@/components/SubtitleOverlay';
 import type { Segment } from '@/types/domain';
 import {
   getSettings,
+  saveSettings,
   subscribeToSettings,
   normalizeSettings,
 } from '@/storage/settings';
 
-export type { SubtitleDisplayMode, SubtitleLineOrder, SubtitleFontSize };
+export type { SubtitleDisplayMode, SubtitleLineOrder, SubtitleFontSize, SubtitlePosition };
 
 export interface SubtitleMountProps extends SubtitleOverlayProps {}
 
@@ -27,6 +29,8 @@ export interface SubtitleOverlayInstance {
   updateProps: (props: Partial<SubtitleMountProps>) => void;
   setSegment: (segment: Segment | null) => void;
   setVisible: (visible: boolean) => void;
+  setPosition: (pos: SubtitlePosition | null) => void;
+  resetPosition: () => void;
 }
 
 const NATIVE_CC_STYLE_ID = 'aetherdub-native-cc-suppression';
@@ -122,10 +126,31 @@ export function mountSubtitleOverlay(
   hostEl.style.pointerEvents = 'none';
   hostEl.style.zIndex = '9999';
 
+  let currentPosition: SubtitlePosition | null = null;
+
   // Function to adapt bottom position based on YouTube controls autohide state
   const updateBottomPosition = () => {
+    if (currentPosition) {
+      hostEl.style.bottom = 'auto';
+      return;
+    }
     const isAutohide = container.classList.contains('ytp-autohide');
     hostEl.style.bottom = isAutohide ? '56px' : '96px';
+  };
+
+  const applyPosition = (pos: SubtitlePosition | null) => {
+    currentPosition = pos;
+    if (pos) {
+      hostEl.style.left = `${pos.xPercent}%`;
+      hostEl.style.top = `${pos.yPercent}%`;
+      hostEl.style.bottom = 'auto';
+      hostEl.style.transform = 'translate(-50%, -50%)';
+    } else {
+      hostEl.style.left = '50%';
+      hostEl.style.top = 'auto';
+      hostEl.style.transform = 'translateX(-50%)';
+      updateBottomPosition();
+    }
   };
 
   updateBottomPosition();
@@ -160,8 +185,14 @@ export function mountSubtitleOverlay(
       pointer-events: none;
     }
     .subtitle-pill {
-      user-select: none;
+      user-select: text;
+      cursor: grab;
+      pointer-events: auto;
       transition: opacity 0.15s ease-in-out;
+    }
+    .subtitle-pill.is-dragging,
+    .subtitle-pill.dragging {
+      cursor: grabbing;
     }
   `;
   shadowRoot.appendChild(styleEl);
@@ -174,7 +205,7 @@ export function mountSubtitleOverlay(
   let currentProps: SubtitleMountProps = {
     visible: true,
     displayMode: 'bilingual',
-    lineOrder: 'translated-first',
+    lineOrder: 'original-first',
     fontSizeScale: 'standard',
     ...initialProps,
   };
@@ -194,6 +225,16 @@ export function mountSubtitleOverlay(
         <SubtitleOverlay
           {...currentProps}
           isControlsVisible={!container.classList.contains('ytp-autohide')}
+          onPositionChange={(pos) => {
+            applyPosition(pos);
+            void saveSettings({ subtitlePosition: pos });
+            currentProps.onPositionChange?.(pos);
+          }}
+          onResetPosition={() => {
+            applyPosition(null);
+            void saveSettings({ subtitlePosition: null });
+            currentProps.onResetPosition?.();
+          }}
         />
       );
     });
@@ -251,6 +292,13 @@ export function mountSubtitleOverlay(
       currentProps = { ...currentProps, visible };
       renderComponent();
     },
+    setPosition: (pos: SubtitlePosition | null) => {
+      applyPosition(pos);
+    },
+    resetPosition: () => {
+      applyPosition(null);
+      void saveSettings({ subtitlePosition: null });
+    },
   };
 
   (hostEl as any).__aetherdub_subtitle_instance = instance;
@@ -260,6 +308,9 @@ export function mountSubtitleOverlay(
   getSettings()
     .then((settings) => {
       if (!mounted) return;
+      if (settings.subtitlePosition) {
+        applyPosition(settings.subtitlePosition);
+      }
       const toApply: Partial<SubtitleMountProps> = {};
       if (!explicitlySet.has('displayMode')) {
         toApply.displayMode = settings.subtitleDisplayMode;
@@ -280,6 +331,9 @@ export function mountSubtitleOverlay(
   // Listen for settings updates via in-memory subscription
   unsubscribeSettings = subscribeToSettings((settings) => {
     if (!mounted) return;
+    if ('subtitlePosition' in settings) {
+      applyPosition(settings.subtitlePosition ?? null);
+    }
     getActiveSubtitleInstance()?.updateProps({
       displayMode: settings.subtitleDisplayMode,
       lineOrder: settings.subtitleLineOrder,
@@ -292,6 +346,9 @@ export function mountSubtitleOverlay(
     storageListener = (changes: Record<string, any>, areaName: string) => {
       if (areaName === 'local' && changes.userSettings?.newValue && mounted) {
         const updated = normalizeSettings(changes.userSettings.newValue);
+        if ('subtitlePosition' in updated) {
+          applyPosition(updated.subtitlePosition ?? null);
+        }
         getActiveSubtitleInstance()?.updateProps({
           displayMode: updated.subtitleDisplayMode,
           lineOrder: updated.subtitleLineOrder,

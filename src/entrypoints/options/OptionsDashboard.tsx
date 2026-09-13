@@ -33,7 +33,9 @@ import {
   CheckCircle2,
   Sliders,
   Radio,
+  RotateCcw,
 } from 'lucide-react';
+import { getActiveSubtitleInstance } from '../content/subtitle-mount';
 
 async function defaultResetTtsBreaker(): Promise<void> {
   await sendExtensionMessage({ action: 'RESET_TTS_BREAKER' }, 5_000);
@@ -73,8 +75,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
   const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<SubtitleDisplayMode>('bilingual');
-  const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('translated-first');
+  const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('original-first');
   const [subtitleFontSize, setSubtitleFontSize] = useState<SubtitleFontSize>('standard');
+  const [resetPositionStatus, setResetPositionStatus] = useState<string | null>(null);
 
   const [showBackendKey, setShowBackendKey] = useState(false);
 
@@ -115,7 +118,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
       setSubtitleDisplayMode(saved.subtitleDisplayMode || 'bilingual');
-      setSubtitleLineOrder(saved.subtitleLineOrder || 'translated-first');
+      setSubtitleLineOrder(saved.subtitleLineOrder || 'original-first');
       setSubtitleFontSize(saved.subtitleFontSize || 'standard');
     });
 
@@ -139,6 +142,18 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       }
     };
   }, [segmentCache]);
+
+  const handleResetSubtitlePosition = async () => {
+    await saveSettings({ subtitlePosition: null });
+    const activeInst = getActiveSubtitleInstance();
+    if (activeInst) {
+      activeInst.resetPosition();
+    }
+    setResetPositionStatus('Position reset');
+    setTimeout(() => {
+      setResetPositionStatus(null);
+    }, 2500);
+  };
 
   const handleSaveCredentials = async () => {
     await saveSettings({
@@ -592,8 +607,8 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   }}
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
                 >
-                  <option value="translated-first">Translated First (Top)</option>
                   <option value="original-first">Original First (Top)</option>
+                  <option value="translated-first">Translated First (Top)</option>
                 </select>
               </div>
 
@@ -620,6 +635,30 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   <option value="standard">Standard (18px)</option>
                   <option value="large">Large (22px)</option>
                 </select>
+              </div>
+            </div>
+
+            {/* Action Row for Reset Subtitle Position */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 mt-5 border-t border-gray-800/80">
+              <p className="text-xs font-sans text-gray-400 max-w-md">
+                Reposition subtitles freely by dragging the on-screen pill. Double-click the pill or tap reset below to return to the default bottom docking.
+              </p>
+              <div className="flex items-center gap-3">
+                {resetPositionStatus && (
+                  <span className="px-3 py-1 rounded border border-[#00ff88]/60 bg-[#00ff88]/15 text-[#00ff88] font-mono text-xs font-bold shadow-[0_0_10px_rgba(0,255,136,0.3)] animate-in fade-in">
+                    {resetPositionStatus}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  data-testid="reset-subtitle-position-btn"
+                  aria-label="Reset Subtitle Position"
+                  onClick={handleResetSubtitlePosition}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset Subtitle Position
+                </button>
               </div>
             </div>
           </section>

@@ -387,11 +387,11 @@ describe('OptionsDashboard — Parallel Caption Overlay Settings (Issue #18)', (
     const fontSizeSelect = await screen.findByTestId('subtitle-font-size-select');
 
     expect(displayModeSelect).toHaveValue('bilingual');
-    expect(lineOrderSelect).toHaveValue('translated-first');
+    expect(lineOrderSelect).toHaveValue('original-first');
     expect(fontSizeSelect).toHaveValue('standard');
 
     fireEvent.change(displayModeSelect, { target: { value: 'translated-only' } });
-    fireEvent.change(lineOrderSelect, { target: { value: 'original-first' } });
+    fireEvent.change(lineOrderSelect, { target: { value: 'translated-first' } });
     fireEvent.change(fontSizeSelect, { target: { value: 'large' } });
 
     fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
@@ -399,7 +399,7 @@ describe('OptionsDashboard — Parallel Caption Overlay Settings (Issue #18)', (
     await waitFor(async () => {
       const saved = await getSettings();
       expect(saved.subtitleDisplayMode).toBe('translated-only');
-      expect(saved.subtitleLineOrder).toBe('original-first');
+      expect(saved.subtitleLineOrder).toBe('translated-first');
       expect(saved.subtitleFontSize).toBe('large');
     });
   });

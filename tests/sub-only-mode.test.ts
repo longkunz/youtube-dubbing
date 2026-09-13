@@ -62,6 +62,8 @@ function makeSubtitleInstance(): SubtitleOverlayInstance {
     updateProps: vi.fn(),
     setSegment: vi.fn(),
     setVisible: vi.fn(),
+    setPosition: vi.fn(),
+    resetPosition: vi.fn(),
   };
 }
 

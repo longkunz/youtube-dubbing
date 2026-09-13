@@ -18,6 +18,11 @@ export type SubtitleDisplayMode = 'bilingual' | 'translated-only' | 'original-on
 export type SubtitleLineOrder = 'translated-first' | 'original-first';
 export type SubtitleFontSize = 'small' | 'standard' | 'large';
 
+export interface SubtitlePosition {
+  xPercent: number;
+  yPercent: number;
+}
+
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<any>;
 
 export interface UserSettings {
@@ -32,6 +37,7 @@ export interface UserSettings {
   subtitleDisplayMode: SubtitleDisplayMode;
   subtitleLineOrder: SubtitleLineOrder;
   subtitleFontSize: SubtitleFontSize;
+  subtitlePosition?: SubtitlePosition | null;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -43,8 +49,9 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   backendUrl: 'http://127.0.0.1:8787',
   backendApiKey: '',
   subtitleDisplayMode: 'bilingual',
-  subtitleLineOrder: 'translated-first',
+  subtitleLineOrder: 'original-first',
   subtitleFontSize: 'standard',
+  subtitlePosition: null,
 };
 
 export function normalizeSettings(input: Partial<UserSettings> | undefined): UserSettings {
@@ -65,10 +72,33 @@ export function normalizeSettings(input: Partial<UserSettings> | undefined): Use
     merged.subtitleDisplayMode = 'bilingual';
   }
   if (!merged.subtitleLineOrder) {
-    merged.subtitleLineOrder = 'translated-first';
+    merged.subtitleLineOrder = 'original-first';
   }
   if (!merged.subtitleFontSize) {
     merged.subtitleFontSize = 'standard';
+  }
+  if (input && 'subtitlePosition' in input) {
+    if (input.subtitlePosition === null) {
+      merged.subtitlePosition = null;
+    } else if (
+      input.subtitlePosition &&
+      typeof input.subtitlePosition.xPercent === 'number' &&
+      typeof input.subtitlePosition.yPercent === 'number'
+    ) {
+      merged.subtitlePosition = {
+        xPercent: Math.max(0, Math.min(100, input.subtitlePosition.xPercent)),
+        yPercent: Math.max(0, Math.min(100, input.subtitlePosition.yPercent)),
+      };
+    } else {
+      merged.subtitlePosition = null;
+    }
+  } else if (merged.subtitlePosition) {
+    merged.subtitlePosition = {
+      xPercent: Math.max(0, Math.min(100, merged.subtitlePosition.xPercent)),
+      yPercent: Math.max(0, Math.min(100, merged.subtitlePosition.yPercent)),
+    };
+  } else {
+    merged.subtitlePosition = null;
   }
   return merged;
 }
