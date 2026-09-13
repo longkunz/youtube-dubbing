@@ -13,11 +13,10 @@ export interface NotificationBannerProps {
 }
 
 const DEFAULT_BANNER_MESSAGE =
-  'No captions could be downloaded for this video. If CC is visible, wait a few seconds and retry (Proof-of-Origin). Add a Groq API key in Settings to enable Whisper STT fallback.';
+  'No captions available for this video. Enable YouTube CC or check video source.';
 
 /**
- * Cyberpunk Notification Banner displayed in-player when captions are unavailable,
- * prompting the user to configure Whisper STT credentials in the Command Center.
+ * Cyberpunk Notification Banner displayed in-player when captions are unavailable.
  */
 export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   message = DEFAULT_BANNER_MESSAGE,

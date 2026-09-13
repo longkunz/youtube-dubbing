@@ -245,26 +245,13 @@ describe('SegmentCache', () => {
 
   // --- close() ---
 
-  it('isolates transcripts by Translation Provider and reads legacy keys as Gemini', async () => {
-    const youtubeCopy: Transcript = {
-      ...TRANSCRIPT_A,
-      segments: TRANSCRIPT_A.segments.map((s) => ({
-        ...s,
-        translatedText: 'Bản YouTube',
-      })),
-    };
-
-    await cache.saveTranscript(TRANSCRIPT_A, 'gemini');
-    await cache.saveTranscript(youtubeCopy, 'youtube-caption-translation');
-
-    const gemini = await cache.getTranscript('vid-001', 'vi', 'gemini');
-    const youtube = await cache.getTranscript('vid-001', 'vi', 'youtube-caption-translation');
-
-    expect(gemini!.segments[0].translatedText).toBe('Xin chào mọi người');
-    expect(youtube!.segments[0].translatedText).toBe('Bản YouTube');
+  it('saves and retrieves transcript using self-hosted provider', async () => {
+    await cache.saveTranscript(TRANSCRIPT_A, 'self-hosted');
+    const loaded = await cache.getTranscript('vid-001', 'vi', 'self-hosted');
+    expect(loaded!.segments[0].translatedText).toBe('Xin chào mọi người');
   });
 
-  it('reads a pre-provider transcript key as Gemini and not as YouTube Caption Translation', async () => {
+  it('reads a legacy pre-provider transcript key as self-hosted fallback', async () => {
     const { openDB } = await import('idb');
     const dbName = `legacy-transcript-${Math.random()}`;
     const legacyCache = new SegmentCache({ dbName });
@@ -280,8 +267,7 @@ describe('SegmentCache', () => {
     });
     db.close();
 
-    expect(await legacyCache.getTranscript('vid-legacy', 'vi', 'gemini')).not.toBeNull();
-    expect(await legacyCache.getTranscript('vid-legacy', 'vi', 'youtube-caption-translation')).toBeNull();
+    expect(await legacyCache.getTranscript('vid-legacy', 'vi', 'self-hosted')).not.toBeNull();
     legacyCache.close();
   });
 

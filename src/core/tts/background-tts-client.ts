@@ -9,29 +9,25 @@
 import type { DubbingTtsClient } from '../orchestrator/dubbing-orchestrator';
 import type { VoiceProfile } from '../../types/domain';
 import { sendExtensionMessage } from '../extension-runtime';
-import { WebSpeechFallback } from './web-speech-fallback';
-import { DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from './voices';
-
-export interface PageSpeech {
-  speak(text: string, voice?: VoiceProfile): Promise<void>;
-}
+import { DEFAULT_MAI_CHI_VOICE, DEFAULT_HOAI_MY_VOICE, DEFAULT_NAM_MINH_VOICE } from './voices';
 
 export class BackgroundDubbingTtsClient implements DubbingTtsClient {
-  private readonly webSpeech: PageSpeech;
-
-  constructor(options?: { webSpeech?: PageSpeech }) {
-    this.webSpeech = options?.webSpeech ?? new WebSpeechFallback();
-  }
-
   async synthesize(
     text: string,
     options?: { voice?: string; rate?: string; pitch?: string }
   ): Promise<Blob> {
-    const voiceKey = options?.voice ?? 'vi-VN-HoaiMyNeural';
+    const voiceKey = options?.voice ?? 'maichi';
     const isMale = voiceKey.includes('NamMinh');
+    const isHoaiMy = voiceKey.includes('HoaiMy');
+
+    const baseProfile = isMale
+      ? DEFAULT_NAM_MINH_VOICE
+      : isHoaiMy
+        ? DEFAULT_HOAI_MY_VOICE
+        : DEFAULT_MAI_CHI_VOICE;
 
     const voiceProfile: VoiceProfile = {
-      ...(isMale ? DEFAULT_NAM_MINH_VOICE : DEFAULT_HOAI_MY_VOICE),
+      ...baseProfile,
       id: voiceKey,
       voiceKey,
       pitch: options?.pitch ?? '+0Hz',
@@ -53,16 +49,15 @@ export class BackgroundDubbingTtsClient implements DubbingTtsClient {
       },
       45_000,
     );
-    if (response?.code === 'WEB_SPEECH_REQUIRED') {
-      await this.webSpeech.speak(text, voiceProfile);
-      throw new Error(response.error || 'WEB_SPEECH_REQUIRED');
-    }
+
     if (!response?.success || !response.audioBase64) {
-      // No in-page Edge TTS fallback: surface unavailable so the
-      // orchestrator skips the cue instead of stacking voices or
-      // feeding a dummy blob into the Playback Sync Engine.
-      throw new Error(response?.error || response?.code || 'TTS synthesis failed in background');
+      const err = new Error(response?.error || response?.code || 'TTS synthesis failed in background');
+      if (response?.code) {
+        (err as any).code = response.code;
+      }
+      throw err;
     }
+
     const binary = atob(response.audioBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {

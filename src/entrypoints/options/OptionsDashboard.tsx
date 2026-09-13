@@ -3,13 +3,8 @@ import {
   getSettings,
   saveSettings,
   pingBackendConnection,
-  pingGeminiConnection,
-  pingOpenAiConnection,
   DEFAULT_USER_SETTINGS,
-  DEFAULT_GEMINI_MODEL,
-  GEMINI_MODEL_PRESETS,
   type UserSettings,
-  type PingOpenAiResult,
   type PingBackendResult,
   type TranslationProvider,
   type TtsProvider,
@@ -18,7 +13,6 @@ import {
   type SubtitleFontSize,
 } from '../../storage/settings';
 import { sendExtensionMessage } from '../../core/extension-runtime';
-import { defaultFetch } from '../../core/default-fetch';
 import { SegmentCache, type StorageUsageStats } from '../../storage/segment-cache';
 import { BackgroundDubbingTtsClient } from '../../core/tts/background-tts-client';
 import {
@@ -37,38 +31,23 @@ import {
   Save,
   Trash2,
   CheckCircle2,
-  AlertTriangle,
   Sliders,
   Radio,
-  ShieldCheck,
 } from 'lucide-react';
 
 async function defaultResetTtsBreaker(): Promise<void> {
   await sendExtensionMessage({ action: 'RESET_TTS_BREAKER' }, 5_000);
 }
 
-function isGeminiPreset(model: string): boolean {
-  return (GEMINI_MODEL_PRESETS as readonly string[]).includes(model);
-}
-
 export interface OptionsDashboardProps {
   segmentCache?: SegmentCache;
-  pingFn?: (
-    apiKey: string,
-    model?: string,
-  ) => Promise<{ ok: boolean; latencyMs: number; error?: string }>;
-  pingOpenAiFn?: (
-    endpoint: string,
-    model: string,
-    apiKey?: string
-  ) => Promise<PingOpenAiResult>;
   pingBackendFn?: (
     url: string,
     apiKey: string
   ) => Promise<PingBackendResult>;
   /** After a successful Self-hosted Ping, reset the worker TTS circuit breaker. */
   resetTtsBreaker?: () => Promise<void>;
-  /** Injectable Edge-TTS client for the voice preview (defaults to background proxy). */
+  /** Injectable client for the voice preview (defaults to background proxy). */
   ttsPreviewClient?: {
     synthesize(
       text: string,
@@ -83,35 +62,21 @@ export type TtsPreviewPhase = 'idle' | 'synthesizing' | 'playing' | 'success' | 
 
 export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   segmentCache,
-  pingFn,
-  pingOpenAiFn,
   pingBackendFn,
   resetTtsBreaker,
   ttsPreviewClient,
   createPreviewAudio,
 }) => {
-  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('self-hosted');
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8787');
   const [backendApiKey, setBackendApiKey] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
-  const [geminiModelIsCustom, setGeminiModelIsCustom] = useState(false);
-  const [openaiEndpoint, setOpenaiEndpoint] = useState('https://api.openai.com/v1');
-  const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
-  const [openaiApiKey, setOpenaiApiKey] = useState('');
-  const [groqApiKey, setGroqApiKey] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('piper');
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('zerotts');
   const [ttsPitch, setTtsPitch] = useState('+0Hz');
   const [ttsRate, setTtsRate] = useState('+0%');
-  const [enableFallback, setEnableFallback] = useState(true);
   const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<SubtitleDisplayMode>('bilingual');
   const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('translated-first');
   const [subtitleFontSize, setSubtitleFontSize] = useState<SubtitleFontSize>('standard');
 
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showBackendKey, setShowBackendKey] = useState(false);
-  const [showOpenAiKey, setShowOpenAiKey] = useState(false);
-  const [showGroqKey, setShowGroqKey] = useState(false);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [pingStatus, setPingStatus] = useState<{
@@ -129,6 +94,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const previewPlaybackRef = useRef<PreviewPlayback | null>(null);
   const previewRunIdRef = useRef(0);
 
+  // Ensure any active audio preview is stopped when unmounted
+  useEffect(() => {
+    return () => {
+      previewPlaybackRef.current?.stop();
+      previewPlaybackRef.current = null;
+    };
+  }, []);
+
   const cache = segmentCache ?? new SegmentCache();
 
   useEffect(() => {
@@ -136,21 +109,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
     getSettings().then((saved) => {
       if (!active) return;
-      setTranslationProvider(saved.translationProvider || 'self-hosted');
       setBackendUrl(saved.backendUrl || 'http://127.0.0.1:8787');
       setBackendApiKey(saved.backendApiKey || '');
-      setGeminiApiKey(saved.geminiApiKey || '');
-      const loadedModel = saved.geminiModel || DEFAULT_GEMINI_MODEL;
-      setGeminiModel(loadedModel);
-      setGeminiModelIsCustom(!isGeminiPreset(loadedModel));
-      setOpenaiEndpoint(saved.openaiEndpoint || 'https://api.openai.com/v1');
-      setOpenaiModel(saved.openaiModel || 'gpt-4o-mini');
-      setOpenaiApiKey(saved.openaiApiKey || '');
-      setGroqApiKey(saved.groqApiKey || '');
-      setTtsProvider(saved.ttsProvider || 'piper');
+      setTtsProvider(saved.ttsProvider || 'zerotts');
       setTtsPitch(saved.ttsPitch || '+0Hz');
       setTtsRate(saved.ttsRate || '+0%');
-      setEnableFallback(saved.enableFallback ?? true);
       setSubtitleDisplayMode(saved.subtitleDisplayMode || 'bilingual');
       setSubtitleLineOrder(saved.subtitleLineOrder || 'translated-first');
       setSubtitleFontSize(saved.subtitleFontSize || 'standard');
@@ -179,19 +142,13 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
 
   const handleSaveCredentials = async () => {
     await saveSettings({
-      translationProvider,
+      translationProvider: 'self-hosted',
+      targetLanguage: 'vi',
       backendUrl,
       backendApiKey: backendApiKey.trim(),
-      geminiApiKey: geminiApiKey.trim(),
-      geminiModel: geminiModel.trim() || DEFAULT_GEMINI_MODEL,
-      openaiEndpoint,
-      openaiModel,
-      openaiApiKey,
-      groqApiKey: groqApiKey.trim(),
       ttsProvider,
       ttsPitch,
       ttsRate,
-      enableFallback,
       subtitleDisplayMode,
       subtitleLineOrder,
       subtitleFontSize,
@@ -199,45 +156,34 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
     setSaveStatus('Credentials saved');
     setTimeout(() => {
       setSaveStatus(null);
-    }, 3500);
+    }, 3000);
   };
 
   const handlePing = async () => {
     setPingStatus({ loading: true });
     try {
-      if (translationProvider === 'self-hosted') {
-        const pingBackend = pingBackendFn ?? pingBackendConnection;
-        const res = await pingBackend(backendUrl, backendApiKey);
-        if (res.ok) {
-          const reset = resetTtsBreaker ?? defaultResetTtsBreaker;
-          try {
-            await reset();
-          } catch {
-            // Options page can ping before a worker is listening.
-          }
-        }
-        setPingStatus({ loading: false, result: res });
-      } else if (translationProvider === 'openai-compatible') {
-        const pingExecutor = pingOpenAiFn ?? pingOpenAiConnection;
-        const res = await pingExecutor(openaiEndpoint, openaiModel, openaiApiKey);
-        setPingStatus({ loading: false, result: res });
-      } else {
-        const resolvedModel = geminiModel.trim() || DEFAULT_GEMINI_MODEL;
-        const res = pingFn
-          ? await pingFn(geminiApiKey, resolvedModel)
-          : await pingGeminiConnection(
-              geminiApiKey,
-              defaultFetch as typeof fetch,
-              resolvedModel,
-            );
-        setPingStatus({ loading: false, result: res });
+      const pingImpl = pingBackendFn ?? pingBackendConnection;
+      const result = await pingImpl(backendUrl, backendApiKey.trim());
+      setPingStatus({
+        loading: false,
+        result: {
+          ok: result.ok,
+          latencyMs: result.latencyMs,
+          error: result.error,
+        },
+      });
+
+      if (result.ok) {
+        const resetBreaker = resetTtsBreaker ?? defaultResetTtsBreaker;
+        resetBreaker().catch((err) => {
+          console.warn('[AetherDub] Failed to reset worker TTS breaker:', err);
+        });
       }
     } catch (err) {
       setPingStatus({
         loading: false,
         result: {
           ok: false,
-          latencyMs: 0,
           error: err instanceof Error ? err.message : String(err),
         },
       });
@@ -245,58 +191,39 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   };
 
   const handlePurgeCache = async () => {
+    if (isPurging) return;
     setIsPurging(true);
     try {
-      await cache.purgeAll();
+      await cache.purge();
       const updated = await cache.getStorageUsage();
       setStorageUsage(updated);
+    } catch (err) {
+      console.error('[AetherDub] Purge cache failed:', err);
     } finally {
       setIsPurging(false);
     }
   };
 
-  const stopTtsPreview = () => {
-    previewRunIdRef.current += 1;
-    previewPlaybackRef.current?.stop();
-    previewPlaybackRef.current = null;
-  };
-
-  // Stop any in-flight preview when the dashboard unmounts.
-  useEffect(() => {
-    return () => {
-      previewPlaybackRef.current?.stop();
-      previewPlaybackRef.current = null;
-    };
-  }, []);
-
-  /**
-   * End-to-end Edge-TTS check: synthesize a short Vietnamese sample through
-   * the background service worker and actually play it back. If the user
-   * hears the voice, Edge TTS synthesis + delivery + audio output all work.
-   */
   const handlePreviewVoice = async () => {
-    // Clicking while playing stops the current preview.
-    if (ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing') {
-      stopTtsPreview();
+    if (previewPlaybackRef.current) {
+      previewPlaybackRef.current.stop();
+      previewPlaybackRef.current = null;
       setTtsPreview({ phase: 'idle' });
       return;
     }
 
-    const runId = previewRunIdRef.current + 1;
-    previewRunIdRef.current = runId;
+    const runId = ++previewRunIdRef.current;
     setTtsPreview({ phase: 'synthesizing' });
 
     try {
       const client = ttsPreviewClient ?? new BackgroundDubbingTtsClient();
       const blob = await client.synthesize(TTS_PREVIEW_TEXT, {
-        voice: 'vi-VN-HoaiMyNeural',
+        voice: 'maichi',
         pitch: ttsPitch,
         rate: ttsRate,
       });
+
       if (previewRunIdRef.current !== runId) return;
-      if (!blob || blob.size === 0) {
-        throw new Error('Edge TTS returned empty audio');
-      }
 
       const playback = playAudioBlob(
         blob,
@@ -311,7 +238,6 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
     } catch (err) {
       if (previewRunIdRef.current !== runId) return;
       const message = err instanceof Error ? err.message : String(err);
-      // User-initiated stop is not an error.
       if (/stopped by user/i.test(message)) return;
       previewPlaybackRef.current = null;
       setTtsPreview({ phase: 'error', detail: message });
@@ -336,7 +262,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
               </h1>
             </div>
             <p className="text-xs font-mono text-gray-400 mt-1 uppercase tracking-widest">
-              Operations Deck // Neural Dubbing & Sub-Atomic Cache Subsystems
+              Operations Deck // Strict Self-Hosted Backend Subsystems
             </p>
           </div>
 
@@ -369,297 +295,79 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </h2>
               </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#00f2fe]/10 text-[#00f2fe] border border-[#00f2fe]/30">
-                BYOK CREDENTIALS
+                BACKEND CONNECTION
               </span>
             </div>
 
             <div className="space-y-5">
-              {/* Translation Provider Selector */}
+              {/* Translation Provider Info */}
               <div>
-                <label
-                  htmlFor="translation-provider-select"
-                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                >
-                  Translation Provider
+                <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                  Translation Engine
                 </label>
-                <select
-                  id="translation-provider-select"
-                  aria-label="Translation Provider"
-                  value={translationProvider}
-                  onChange={(e) =>
-                    setTranslationProvider(e.target.value as TranslationProvider)
-                  }
-                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                >
-                  <option value="self-hosted">Self-hosted Backend (EN→VI)</option>
-                  <option value="openai-compatible">OpenAI-Compatible Proxy (/v1/chat/completions)</option>
-                  <option value="gemini">Google Gemini (Direct REST)</option>
-                  <option value="youtube-caption-translation">YouTube Caption Translation</option>
-                </select>
+                <div className="w-full bg-[#05070e] border border-[#00f2fe]/40 rounded-lg px-3.5 py-2.5 text-sm font-mono text-[#00f2fe]">
+                  Self-hosted Backend (MarianMT EN→VI)
+                </div>
               </div>
 
-              {translationProvider === 'self-hosted' ? (
-                <>
-                  {/* Self-hosted Backend URL */}
-                  <div>
-                    <label
-                      htmlFor="backend-url"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Backend URL
-                    </label>
-                    <input
-                      id="backend-url"
-                      aria-label="Backend URL"
-                      data-testid="backend-url-input"
-                      type="text"
-                      value={backendUrl}
-                      onChange={(e) => setBackendUrl(e.target.value)}
-                      placeholder="http://127.0.0.1:8787"
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    />
-                  </div>
-
-                  {/* Self-hosted Backend API Key */}
-                  <div>
-                    <label
-                      htmlFor="backend-key"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Backend API Key
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        id="backend-key"
-                        aria-label="Backend API Key"
-                        data-testid="backend-key-input"
-                        type={showBackendKey ? 'text' : 'password'}
-                        value={backendApiKey}
-                        onChange={(e) => setBackendApiKey(e.target.value)}
-                        placeholder="BACKEND_API_KEY from the Docker host .env"
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Toggle Backend API Key visibility"
-                        onClick={() => setShowBackendKey((prev) => !prev)}
-                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                      >
-                        {showBackendKey ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <p className="text-xs font-mono text-gray-400 leading-relaxed">
-                    Operator-run Docker service for EN→VI translation and MP3 speech.
-                    No Gemini API key required. Use Test Connection to verify health and key.
-                  </p>
-                </>
-              ) : translationProvider === 'youtube-caption-translation' ? (
-                <p className="text-xs font-mono text-gray-400 leading-relaxed">
-                  Uses a target-language YouTube Caption Track when available, otherwise YouTube
-                  machine translation of a translatable source track. No Gemini API key required.
-                </p>
-              ) : translationProvider === 'openai-compatible' ? (
-                <>
-                  {/* OpenAI Proxy Endpoint URL */}
-                  <div>
-                    <label
-                      htmlFor="openai-endpoint"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Proxy Endpoint URL
-                    </label>
-                    <input
-                      id="openai-endpoint"
-                      data-testid="openai-endpoint-input"
-                      type="text"
-                      value={openaiEndpoint}
-                      onChange={(e) => setOpenaiEndpoint(e.target.value)}
-                      placeholder="https://api.openai.com/v1"
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    />
-                  </div>
-
-                  {/* OpenAI Model Identifier */}
-                  <div>
-                    <label
-                      htmlFor="openai-model"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Model Identifier
-                    </label>
-                    <input
-                      id="openai-model"
-                      data-testid="openai-model-input"
-                      type="text"
-                      value={openaiModel}
-                      onChange={(e) => setOpenaiModel(e.target.value)}
-                      placeholder="gpt-4o-mini"
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    />
-                  </div>
-
-                  {/* OpenAI Proxy API Key (Optional) */}
-                  <div>
-                    <label
-                      htmlFor="openai-key"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      API Key (Optional)
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        id="openai-key"
-                        data-testid="openai-key-input"
-                        type={showOpenAiKey ? 'text' : 'password'}
-                        value={openaiApiKey}
-                        onChange={(e) => setOpenaiApiKey(e.target.value)}
-                        placeholder="sk-... (leave empty if proxy requires no key)"
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Toggle OpenAI API Key visibility"
-                        onClick={() => setShowOpenAiKey((prev) => !prev)}
-                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                      >
-                        {showOpenAiKey ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label
-                      htmlFor="gemini-model"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Gemini Model
-                    </label>
-                    <select
-                      id="gemini-model"
-                      data-testid="gemini-model-select"
-                      aria-label="Gemini Model"
-                      value={geminiModelIsCustom ? 'custom' : geminiModel}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (next === 'custom') {
-                          setGeminiModelIsCustom(true);
-                        } else {
-                          setGeminiModelIsCustom(false);
-                          setGeminiModel(next);
-                        }
-                      }}
-                      className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                    >
-                      {GEMINI_MODEL_PRESETS.map((preset) => (
-                        <option key={preset} value={preset}>
-                          {preset}
-                        </option>
-                      ))}
-                      <option value="custom">custom</option>
-                    </select>
-                  </div>
-
-                  {geminiModelIsCustom ? (
-                    <div>
-                      <label
-                        htmlFor="gemini-model-custom"
-                        className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                      >
-                        Custom Model Identifier
-                      </label>
-                      <input
-                        id="gemini-model-custom"
-                        data-testid="gemini-model-custom-input"
-                        type="text"
-                        value={geminiModel}
-                        onChange={(e) => setGeminiModel(e.target.value)}
-                        placeholder="gemini-..."
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                      />
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <label
-                      htmlFor="gemini-key"
-                      className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                    >
-                      Gemini API Key (Primary Dubbing Engine)
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        id="gemini-key"
-                        data-testid="gemini-key-input"
-                        type={showGeminiKey ? 'text' : 'password'}
-                        value={geminiApiKey}
-                        onChange={(e) => setGeminiApiKey(e.target.value)}
-                        placeholder="AIzaSy..."
-                        className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Toggle Gemini API Key visibility"
-                        onClick={() => setShowGeminiKey((prev) => !prev)}
-                        className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
-                      >
-                        {showGeminiKey ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Groq / OpenAI API Key */}
+              {/* Self-hosted Backend URL */}
               <div>
                 <label
-                  htmlFor="groq-key"
+                  htmlFor="backend-url"
                   className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
                 >
-                  Groq API Key (Whisper STT fallback when captions fail)
+                  Backend URL
+                </label>
+                <input
+                  id="backend-url"
+                  aria-label="Backend URL"
+                  data-testid="backend-url-input"
+                  type="text"
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:8787"
+                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                />
+              </div>
+
+              {/* Self-hosted Backend API Key */}
+              <div>
+                <label
+                  htmlFor="backend-key"
+                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                >
+                  Backend API Key
                 </label>
                 <div className="relative flex items-center">
                   <input
-                    id="groq-key"
-                    data-testid="groq-key-input"
-                    type={showGroqKey ? 'text' : 'password'}
-                    value={groqApiKey}
-                    onChange={(e) => setGroqApiKey(e.target.value)}
-                    placeholder="gsk_... or sk-..."
+                    id="backend-key"
+                    aria-label="Backend API Key"
+                    data-testid="backend-key-input"
+                    type={showBackendKey ? 'text' : 'password'}
+                    value={backendApiKey}
+                    onChange={(e) => setBackendApiKey(e.target.value)}
+                    placeholder="BACKEND_API_KEY from the Docker host .env"
                     className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all pr-10"
                   />
                   <button
                     type="button"
-                    aria-label="Toggle Groq API Key visibility"
-                    onClick={() => setShowGroqKey((prev) => !prev)}
+                    aria-label="Toggle Backend API Key visibility"
+                    onClick={() => setShowBackendKey((prev) => !prev)}
                     className="absolute right-2.5 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
                   >
-                    {showGroqKey ? (
+                    {showBackendKey ? (
                       <EyeOff className="w-4 h-4" />
                     ) : (
                       <Eye className="w-4 h-4" />
                     )}
                   </button>
                 </div>
-                <p className="mt-2 text-[11px] text-gray-500 font-mono leading-relaxed">
-                  Used only after YouTube captions fail. Does not enable Netflix, lip-sync, or paid TTS.
-                </p>
               </div>
+
+              <p className="text-xs font-mono text-gray-400 leading-relaxed">
+                Dedicated Self-hosted Backend for EN→VI MarianMT translation and real-time ZeroTTS synthesis (~70ms TTFA).
+                No external cloud API keys or fallbacks required.
+              </p>
 
               {/* Action Buttons & Ping Badge */}
               <div className="pt-3 flex flex-wrap items-center justify-between gap-4">
@@ -667,16 +375,17 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   <button
                     type="button"
                     onClick={handleSaveCredentials}
+                    data-testid="save-credentials-btn"
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#00f2fe]/80 to-[#7928ca]/80 hover:from-[#00f2fe] hover:to-[#7928ca] text-white font-mono text-xs font-semibold uppercase tracking-wider transition-all duration-150 cursor-pointer shadow-[0_0_15px_rgba(0,242,254,0.3)]"
                   >
                     <Save className="w-3.5 h-3.5" />
                     Save Credentials
                   </button>
 
-                  {translationProvider !== 'youtube-caption-translation' ? (
                   <button
                     type="button"
                     aria-label="Ping Connection (Test Connection)"
+                    data-testid="test-connection-btn"
                     onClick={handlePing}
                     disabled={pingStatus?.loading}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer disabled:opacity-50"
@@ -684,7 +393,6 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                     <Activity className={`w-3.5 h-3.5 ${pingStatus?.loading ? 'animate-spin' : ''}`} />
                     Test Connection
                   </button>
-                  ) : null}
                 </div>
 
                 {/* Ping Result Badge */}
@@ -729,6 +437,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </label>
                 <select
                   id="tts-provider-select"
+                  data-testid="tts-provider-select"
                   aria-label="Select TTS Engine Provider"
                   value={ttsProvider}
                   onChange={(e) => {
@@ -738,9 +447,9 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   }}
                   className="w-full bg-[#05070e] border border-gray-700 focus:border-[#ff007a] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#ff007a] transition-all"
                 >
-                  <option value="piper">Local TTS (MMS-TTS GPU, Piper CPU fallback)</option>
-                  <option value="edge">Edge Neural TTS (on Docker host)</option>
-                  <option value="web-speech">Web Speech API (in Chrome, degraded)</option>
+                  <option value="zerotts">ZeroTTS CPU (Real-Time ~70ms TTFA)</option>
+                  <option value="piper">Piper Neural (Backend Local)</option>
+                  <option value="edge">Edge Neural TTS (Backend Host)</option>
                 </select>
               </div>
 
@@ -755,6 +464,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   </label>
                   <input
                     id="pitch-input"
+                    data-testid="pitch-input"
                     type="text"
                     value={ttsPitch}
                     onChange={(e) => setTtsPitch(e.target.value)}
@@ -771,6 +481,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   </label>
                   <input
                     id="rate-input"
+                    data-testid="rate-input"
                     type="text"
                     value={ttsRate}
                     onChange={(e) => setTtsRate(e.target.value)}
@@ -780,28 +491,10 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Fallback Checkbox */}
-              <div className="flex items-center gap-2 pt-2">
-                <input
-                  id="enable-fallback"
-                  type="checkbox"
-                  checked={enableFallback}
-                  onChange={(e) => setEnableFallback(e.target.checked)}
-                  className="rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] bg-[#05070e]"
-                />
-                <label
-                  htmlFor="enable-fallback"
-                  className="text-xs font-mono text-gray-300 cursor-pointer select-none"
-                >
-                  Enable Web Speech API Fallback upon Edge-TTS Failure
-                </label>
-              </div>
-
-              {/* Edge-TTS Voice Preview */}
+              {/* ZeroTTS Voice Preview */}
               <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-800">
                 <p className="text-xs font-sans text-gray-400 max-w-md">
-                  Synthesizes a short Vietnamese sample through Edge TTS and plays it back.
-                  If you hear the voice, synthesis and audio output both work.
+                  Synthesizes a short Vietnamese sample through ZeroTTS and plays it back.
                 </p>
                 <div className="flex items-center gap-3">
                   {ttsPreview.phase === 'success' && (
@@ -821,10 +514,11 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                   )}
                   <button
                     type="button"
+                    data-testid="tts-preview-btn"
                     aria-label={
                       ttsPreview.phase === 'playing' || ttsPreview.phase === 'synthesizing'
                         ? 'Stop preview'
-                        : 'Preview Edge TTS voice'
+                        : 'Preview ZeroTTS voice'
                     }
                     onClick={handlePreviewVoice}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#ff007a]/40 hover:border-[#ff007a] bg-[#ff007a]/10 hover:bg-[#ff007a]/20 text-[#ff007a] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
@@ -948,14 +642,20 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-lg bg-[#05070e] border border-gray-800">
                   <div className="text-xs font-mono text-gray-400 uppercase">Cached Videos</div>
-                  <div className="text-xl font-mono font-bold text-[#00ff88] mt-1">
+                  <div
+                    data-testid="cache-videos-count"
+                    className="text-xl font-mono font-bold text-[#00ff88] mt-1"
+                  >
                     {videoCountLabel}
                   </div>
                 </div>
 
                 <div className="p-4 rounded-lg bg-[#05070e] border border-gray-800">
                   <div className="text-xs font-mono text-gray-400 uppercase">Storage Consumed</div>
-                  <div className="text-xl font-mono font-bold text-[#00f2fe] mt-1">
+                  <div
+                    data-testid="cache-bytes-count"
+                    className="text-xl font-mono font-bold text-[#00f2fe] mt-1"
+                  >
                     {totalMB} MB
                   </div>
                 </div>
@@ -967,6 +667,7 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
                 </p>
                 <button
                   type="button"
+                  data-testid="purge-cache-btn"
                   onClick={handlePurgeCache}
                   disabled={isPurging}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#ff007a]/50 hover:border-[#ff007a] bg-[#ff007a]/15 hover:bg-[#ff007a]/25 text-[#ff007a] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer disabled:opacity-50"

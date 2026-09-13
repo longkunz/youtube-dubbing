@@ -46,6 +46,8 @@ export interface HudContainerProps {
 
   /** Translation engine badge shown in the cockpit telemetry row. */
   engineLabel?: string;
+  isBackendOffline?: boolean;
+  onRetry?: () => void;
 
   /**
    * Called when the user clicks the primary pill hit area to enable dubbing.
@@ -74,7 +76,7 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   initialIsOpen = false,
   initialIsEnabled,
   initialTargetLanguage = 'vi',
-  initialVoiceId = 'vi-VN-HoaiMyNeural',
+  initialVoiceId = 'maichi',
   initialDuckLevel = 0.2,
   initialActiveSegment = null,
   initialIsMultiSpeakerEnabled = false,
@@ -100,6 +102,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
   onOpenCommandCenter,
   onOpenSettings,
   engineLabel,
+  isBackendOffline,
+  onRetry,
   onActivateDubbing,
   onTargetLanguageChange,
   onDeactivateDubbing,
@@ -385,6 +389,8 @@ export const HudContainer: React.FC<HudContainerProps> = ({
         isDucked={isDucked}
         onOpenSettings={handleOpenSettings}
         engineLabel={engineLabel}
+        isBackendOffline={isBackendOffline}
+        onRetry={onRetry}
       />
 
       {effectivePreparationMode && (

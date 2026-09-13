@@ -7,9 +7,7 @@ import {
   waitForAudioCaptionTracks,
   trackHasPot,
   sortPotFirst,
-  shouldSkipStaticPlayerResponseFallback,
   resolveEngineLabel,
-  tryWhisperTranscriptFallback,
   isThrottleError,
   isVideoThrottled,
   markVideoThrottled,
@@ -18,7 +16,12 @@ import {
   translateViaBackground,
   TRANSLATE_BATCH_SIZE,
   TRANSLATE_BATCH_TIMEOUT_MS,
+  notifyBackendOffline,
+  getCoordinatorState,
+  startDubbingPipeline,
+  stopDubbingPipeline,
 } from '../src/entrypoints/content/orchestrator-coordinator';
+import { DubbingOrchestratorImpl } from '../src/core/orchestrator/dubbing-orchestrator';
 import { resetSettingsForTesting, saveSettings } from '../src/storage/settings';
 
 function mountMoviePlayer(api: Record<string, any>): HTMLElement {
@@ -215,45 +218,17 @@ describe('Caption detection (CC-visible regression)', () => {
       ]);
       expect(tracks.map((t) => t.languageCode)).toEqual(['en', 'vi']);
     });
-
-    it('skips static playerResponse fallback when only pre-POT gated tracks exist', () => {
-      expect(
-        shouldSkipStaticPlayerResponseFallback([
-          { baseUrl: 'https://x/api/timedtext?v=v&exp=xpe&lang=en', languageCode: 'en' },
-        ]),
-      ).toBe(true);
-      expect(
-        shouldSkipStaticPlayerResponseFallback([
-          { baseUrl: 'https://x/api/timedtext?v=v&exp=xpe&lang=en&pot=T', languageCode: 'en' },
-        ]),
-      ).toBe(false);
-      expect(shouldSkipStaticPlayerResponseFallback([])).toBe(false);
-    });
   });
 
   describe('resolveEngineLabel (cockpit Engine badge follows settings)', () => {
-    it('returns the configured Gemini model, defaulting to gemini-3.8-flash', () => {
-      expect(resolveEngineLabel({ translationProvider: 'gemini', geminiModel: 'gemini-3.5-flash' } as any)).toBe('GEMINI-3.5-FLASH');
-      expect(resolveEngineLabel({ translationProvider: 'gemini' } as any)).toBe('GEMINI-3.8-FLASH');
-      expect(resolveEngineLabel(undefined)).toBe('GEMINI-3.8-FLASH');
-      expect(resolveEngineLabel(null)).toBe('GEMINI-3.8-FLASH');
+    it('returns ZEROTTS CPU when ttsProvider is zerotts', () => {
+      expect(resolveEngineLabel({ ttsProvider: 'zerotts' } as any)).toBe('ZEROTTS CPU');
     });
 
-    it('returns the uppercased model for openai-compatible provider', () => {
-      expect(
-        resolveEngineLabel({ translationProvider: 'openai-compatible', openaiModel: 'gpt-4o-mini' } as any)
-      ).toBe('GPT-4O-MINI');
-      expect(resolveEngineLabel({ translationProvider: 'openai-compatible' } as any)).toBe('OPENAI');
-    });
-
-    it('returns YOUTUBE-CC for YouTube Caption Translation', () => {
-      expect(
-        resolveEngineLabel({ translationProvider: 'youtube-caption-translation' } as any),
-      ).toBe('YOUTUBE-CC');
-    });
-
-    it('returns SELF-HOST for the self-hosted provider', () => {
-      expect(resolveEngineLabel({ translationProvider: 'self-hosted' } as any)).toBe('SELF-HOST');
+    it('returns AETHERDUB-BACKEND for other providers or default', () => {
+      expect(resolveEngineLabel({ ttsProvider: 'edge' } as any)).toBe('AETHERDUB-BACKEND');
+      expect(resolveEngineLabel(undefined)).toBe('AETHERDUB-BACKEND');
+      expect(resolveEngineLabel(null)).toBe('AETHERDUB-BACKEND');
     });
   });
 
@@ -406,27 +381,15 @@ describe('Caption detection (CC-visible regression)', () => {
 
     it('translates in-process when chrome.runtime.sendMessage is unavailable', async () => {
       (globalThis as any).chrome = undefined;
-      await saveSettings({ geminiApiKey: 'k-test', translationProvider: 'gemini' });
+      await saveSettings({ backendApiKey: 'k-test', backendUrl: 'http://127.0.0.1:8787' });
 
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: async () => ({
-          candidates: [
-            {
-              content: {
-                parts: [
-                  {
-                    text: JSON.stringify({
-                      translations: [
-                        { id: 'seg-1', translatedText: 'Xin chào' },
-                        { id: 'seg-2', translatedText: 'Thế giới' },
-                      ],
-                    }),
-                  },
-                ],
-              },
-            },
+          items: [
+            { id: 'seg-1', text: 'Xin chào' },
+            { id: 'seg-2', text: 'Thế giới' },
           ],
         }),
       });
@@ -472,28 +435,132 @@ describe('Caption detection (CC-visible regression)', () => {
     });
   });
 
-  describe('Whisper STT fallback (captions failed)', () => {
-    beforeEach(async () => {
-      await resetSettingsForTesting();
+  describe('End-to-End Offline UX Wiring in Coordinator', () => {
+    it('pauses dub track and dispatches isBackendOffline: true with onRetry handler', () => {
+      const mockInstance = {
+        updateProps: vi.fn(),
+        updateOrchestrator: vi.fn(),
+      } as any;
+      const mockVideo = document.createElement('video');
+      const mockOrchestrator = {
+        handlePause: vi.fn(),
+      } as any;
+      const coordinatorState = getCoordinatorState();
+      coordinatorState.orchestrator = mockOrchestrator;
+
+      notifyBackendOffline(mockInstance, mockVideo, 'vi');
+
+      expect(mockOrchestrator.handlePause).toHaveBeenCalledTimes(1);
+      expect(mockInstance.updateProps).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isBackendOffline: true,
+          onRetry: expect.any(Function),
+        })
+      );
     });
 
-    it('does not call Groq when the API key is missing', async () => {
-      const result = await tryWhisperTranscriptFallback('vid-stt', {
-        streamingData: {
-          adaptiveFormats: [{ mimeType: 'audio/mp4', url: 'https://googlevideo.com/a' }],
-        },
+    it('handleBackendRetry resets breaker, verifies backend health, and resumes pipeline on success', async () => {
+      const mockInstance = {
+        updateProps: vi.fn(),
+        updateOrchestrator: vi.fn(),
+      } as any;
+      const mockVideo = document.createElement('video');
+      Object.defineProperty(mockVideo, 'currentTime', { value: 12.5, configurable: true });
+
+      const sentMessages: any[] = [];
+      const mockSendMessage = vi.fn((msg: any, cb?: (res: any) => void) => {
+        sentMessages.push(msg);
+        cb?.({ success: true });
       });
-      expect(result).toBeNull();
+      (globalThis as any).chrome = {
+        runtime: { sendMessage: mockSendMessage },
+      };
+
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes('/v1/health')) {
+          return { ok: true, status: 200, json: async () => ({ status: 'ok', tts: 'zerotts' }) };
+        }
+        if (String(url).includes('/v1/translate')) {
+          return { ok: true, status: 200, json: async () => ({ items: [] }) };
+        }
+        return { ok: false, status: 404 };
+      });
+      const origFetch = globalThis.fetch;
+      (globalThis as any).fetch = fetchMock;
+
+      try {
+        notifyBackendOffline(mockInstance, mockVideo, 'vi');
+
+        const calls = mockInstance.updateProps.mock.calls;
+        const lastCall = calls[calls.length - 1][0];
+        expect(lastCall.isBackendOffline).toBe(true);
+        expect(typeof lastCall.onRetry).toBe('function');
+
+        await lastCall.onRetry();
+
+        // 1. Reset worker breaker
+        expect(sentMessages).toEqual(
+          expect.arrayContaining([expect.objectContaining({ action: 'RESET_TTS_BREAKER' })])
+        );
+
+        // 2. Health test
+        expect(fetchMock.mock.calls[0][0]).toContain('/v1/health');
+        expect(fetchMock.mock.calls[1][0]).toContain('/v1/translate');
+
+        // 3. Reset offline prop
+        expect(mockInstance.updateProps).toHaveBeenCalledWith(
+          expect.objectContaining({ isBackendOffline: false })
+        );
+      } finally {
+        (globalThis as any).fetch = origFetch;
+      }
     });
 
-    it('does not call Groq when the audio URL is ciphered', async () => {
-      await saveSettings({ groqApiKey: 'gsk_test' });
-      const result = await tryWhisperTranscriptFallback('vid-stt', {
-        streamingData: {
-          adaptiveFormats: [{ mimeType: 'audio/webm', signatureCipher: 's=ABC' }],
+    it('dispatches isBackendOffline and pauses dub track when TTS router emits BACKEND_TTS_UNAVAILABLE', async () => {
+      const mockInstance = {
+        updateProps: vi.fn(),
+        updateOrchestrator: vi.fn(),
+      } as any;
+      const mockVideo = document.createElement('video');
+      const err = new Error('Backend TTS breaker open after 3 consecutive failures');
+      (err as any).code = 'BACKEND_TTS_UNAVAILABLE';
+
+      const mockTtsClient = {
+        synthesize: vi.fn().mockRejectedValue(err),
+      };
+
+      const orchestrator = new DubbingOrchestratorImpl(mockVideo, {
+        ttsClient: mockTtsClient,
+        onTtsError: (ttsErr) => {
+          const code = (ttsErr as any)?.code;
+          const msg = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
+          if (code === 'BACKEND_TTS_UNAVAILABLE' || /BACKEND_TTS_UNAVAILABLE/i.test(msg)) {
+            notifyBackendOffline(mockInstance, mockVideo, 'vi');
+          }
         },
       });
-      expect(result).toBeNull();
+
+      const coordinatorState = getCoordinatorState();
+      coordinatorState.orchestrator = orchestrator;
+      const pauseSpy = vi.spyOn(orchestrator, 'handlePause');
+
+      await orchestrator.synthesizeSegment({
+        id: 'seg-1',
+        startTime: 0,
+        endTime: 2,
+        duration: 2,
+        sourceText: 'Hello',
+        translatedText: 'Xin chào',
+      });
+
+      expect(pauseSpy).toHaveBeenCalled();
+      expect(mockInstance.updateProps).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isBackendOffline: true,
+          onRetry: expect.any(Function),
+        })
+      );
     });
   });
 });
+

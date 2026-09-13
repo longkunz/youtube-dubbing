@@ -8,8 +8,6 @@ export interface InPageCommandCenterProps {
   onOpenInTab?: () => void;
   hostElement?: HTMLElement | null;
   segmentCache?: SegmentCache;
-  pingFn?: OptionsDashboardProps['pingFn'];
-  pingOpenAiFn?: OptionsDashboardProps['pingOpenAiFn'];
   pingBackendFn?: OptionsDashboardProps['pingBackendFn'];
   resetTtsBreaker?: OptionsDashboardProps['resetTtsBreaker'];
   ttsPreviewClient?: OptionsDashboardProps['ttsPreviewClient'];
@@ -22,8 +20,6 @@ export const InPageCommandCenter: React.FC<InPageCommandCenterProps> = ({
   onOpenInTab,
   hostElement,
   segmentCache,
-  pingFn,
-  pingOpenAiFn,
   pingBackendFn,
   resetTtsBreaker,
   ttsPreviewClient,
@@ -176,8 +172,6 @@ export const InPageCommandCenter: React.FC<InPageCommandCenterProps> = ({
       <div className="command-center-body" data-testid="command-center-body">
         <OptionsDashboard
           segmentCache={segmentCache}
-          pingFn={pingFn}
-          pingOpenAiFn={pingOpenAiFn}
           pingBackendFn={pingBackendFn}
           resetTtsBreaker={resetTtsBreaker}
           ttsPreviewClient={ttsPreviewClient}

@@ -7,10 +7,6 @@ export interface TargetLanguageOption {
 
 export const TARGET_LANGUAGES: TargetLanguageOption[] = [
   { code: 'vi', label: 'Tiếng Việt [vi]' },
-  { code: 'en', label: 'English [en]' },
-  { code: 'ja', label: '日本語 [ja]' },
-  { code: 'zh', label: '中文 [zh]' },
-  { code: 'es', label: 'Español [es]' },
 ];
 
 export interface CyberCockpitProps {
@@ -31,8 +27,10 @@ export interface CyberCockpitProps {
   isPlaying?: boolean;
   isDucked?: boolean;
   onOpenSettings?: () => void;
-  /** Translation engine badge (e.g. GEMINI-3.8-FLASH, GPT-4O-MINI). */
+  /** Translation engine badge (e.g. ZEROTTS CPU, AETHERDUB-BACKEND). */
   engineLabel?: string;
+  isBackendOffline?: boolean;
+  onRetry?: () => void;
 }
 
 export const CyberCockpit: React.FC<CyberCockpitProps> = ({
@@ -53,9 +51,11 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   isPlaying = false,
   isDucked = false,
   onOpenSettings,
-  engineLabel = 'GEMINI-3.8-FLASH',
+  engineLabel = 'ZEROTTS CPU',
+  isBackendOffline = false,
+  onRetry,
 }) => {
-  const [internalVoice, setInternalVoice] = useState('vi-VN-HoaiMyNeural');
+  const [internalVoice, setInternalVoice] = useState('maichi');
   const [internalMultiSpeaker, setInternalMultiSpeaker] = useState(isMultiSpeakerEnabled);
   const [internalSubtitles, setInternalSubtitles] = useState(isSubtitlesEnabled ?? true);
   const activeVoice = selectedVoiceId ?? internalVoice;
@@ -77,8 +77,8 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
   const normalizedLang = TARGET_LANGUAGES.find(
     (l) => l.code === targetLanguage || l.label === targetLanguage
   );
-  const currentLangCode = normalizedLang?.code ?? targetLanguage;
-  const currentLangLabel = normalizedLang?.label ?? targetLanguage;
+  const currentLangCode = normalizedLang?.code ?? 'vi';
+  const currentLangLabel = normalizedLang?.label ?? 'Tiếng Việt [vi]';
 
   const duckPercent = Math.round(duckLevel > 1 ? duckLevel : duckLevel * 100);
   const isWaveActive = Boolean(isPlaying && isDucked);
@@ -102,7 +102,6 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
       aria-label="Neural Audio HUD"
       aria-hidden={!isOpen}
     >
-
       {/* Header */}
       <div className="cockpit-header">
         <div className="cockpit-title-wrap">
@@ -167,6 +166,31 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Backend Offline Indicator */}
+      {isBackendOffline && (
+        <div className="backend-offline-banner" data-testid="backend-offline-banner" role="alert">
+          <div className="backend-offline-content">
+            <span className="backend-offline-badge" data-testid="backend-offline-badge">
+              BACKEND OFFLINE
+            </span>
+            <span className="backend-offline-text">
+              Connection to dubbing server lost. Dub Track paused.
+            </span>
+          </div>
+          {onRetry && (
+            <button
+              type="button"
+              className="backend-retry-btn"
+              onClick={onRetry}
+              data-testid="backend-retry-btn"
+              aria-label="Retry Backend Connection"
+            >
+              RECONNECT / RETRY
+            </button>
+          )}
+        </div>
+      )}
 
       {/* On/Off Toggle Row */}
       <div className="cockpit-control-row">
@@ -234,7 +258,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
         </div>
       </div>
 
-      {/* Language Selector */}
+      {/* Language Selector (Locked to Tiếng Việt [vi]) */}
       <div className="cockpit-field-group">
         <label htmlFor="target-language-select" className="module-label">
           Target Language
@@ -245,6 +269,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
             className="cyber-select"
             aria-label="Select Target Language"
             value={currentLangCode}
+            disabled
             onChange={(e) => onSelectLanguage?.(e.target.value)}
           >
             {TARGET_LANGUAGES.map((lang) => (
@@ -283,6 +308,21 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
       <div className="module-label">Neural Voice Matrix</div>
       <div className="voice-list">
         <div
+          className={`voice-card ${activeVoice === 'maichi' ? 'selected' : ''}`}
+          onClick={() => handleVoiceSelect('maichi')}
+          onKeyDown={(e) => handleKeyDown(e, 'maichi')}
+          role="button"
+          tabIndex={0}
+          aria-pressed={activeVoice === 'maichi'}
+        >
+          <div>
+            <div className="voice-name">VOICE-00 // MAI CHI</div>
+            <div className="voice-meta">ZeroTTS CPU Real-Time • ~70ms TTFA</div>
+          </div>
+          <span className="pill-live-beacon" />
+        </div>
+
+        <div
           className={`voice-card ${activeVoice === 'vi-VN-HoaiMyNeural' ? 'selected' : ''}`}
           onClick={() => handleVoiceSelect('vi-VN-HoaiMyNeural')}
           onKeyDown={(e) => handleKeyDown(e, 'vi-VN-HoaiMyNeural')}
@@ -292,7 +332,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
         >
           <div>
             <div className="voice-name">VOICE-01 // HOÀI MY</div>
-            <div className="voice-meta">Neural Soft Female • Edge-TTS</div>
+            <div className="voice-meta">Neural Soft Female • Server Neural</div>
           </div>
           <span className="pill-live-beacon" />
         </div>
@@ -307,7 +347,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
         >
           <div>
             <div className="voice-name">VOICE-02 // NAM MINH</div>
-            <div className="voice-meta">Studio Warm Male • Edge-TTS</div>
+            <div className="voice-meta">Studio Warm Male • Server Neural</div>
           </div>
           <span className="pill-live-beacon" />
         </div>
@@ -323,7 +363,7 @@ export const CyberCockpit: React.FC<CyberCockpitProps> = ({
         >
           ⚙ SETTINGS // CONFIG
         </button>
-        <span>LATENCY: ~110ms</span>
+        <span>LATENCY: ~70ms</span>
       </div>
     </div>
   );

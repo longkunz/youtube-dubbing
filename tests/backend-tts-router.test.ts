@@ -17,14 +17,14 @@ function mp3Response() {
 }
 
 describe('createBackendTtsRouter', () => {
-  it('posts /v1/tts and returns base64 mp3', async () => {
+  it('posts /v1/tts with zerotts engine by default and returns base64 mp3', async () => {
     const fetchFn = vi.fn().mockResolvedValue(mp3Response());
     const router = createBackendTtsRouter({
       fetchFn,
       getSettings: async () => ({
         backendUrl: 'http://127.0.0.1:8787',
         backendApiKey: 'k',
-        ttsProvider: 'backend',
+        ttsProvider: 'zerotts',
       }),
     });
     const result = await router.synthesize('Xin chào', DEFAULT_HOAI_MY_VOICE);
@@ -34,7 +34,7 @@ describe('createBackendTtsRouter', () => {
     expect(result.audioBase64).toBeTruthy();
     expect(String(fetchFn.mock.calls[0][0])).toBe('http://127.0.0.1:8787/v1/tts');
     expect(fetchFn.mock.calls[0][1].headers.Authorization).toBe('Bearer k');
-    expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('piper');
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('zerotts');
   });
 
   it('sends engine edge when ttsProvider is edge', async () => {
@@ -51,6 +51,20 @@ describe('createBackendTtsRouter', () => {
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('edge');
   });
 
+  it('sends engine piper when ttsProvider is piper', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(mp3Response());
+    const router = createBackendTtsRouter({
+      fetchFn,
+      getSettings: async () => ({
+        backendUrl: 'http://127.0.0.1:8787',
+        backendApiKey: 'k',
+        ttsProvider: 'piper',
+      }),
+    });
+    await router.synthesize('Xin chào', DEFAULT_HOAI_MY_VOICE);
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).engine).toBe('piper');
+  });
+
   it('does not call the backend or trip the breaker for empty text', async () => {
     const fetchFn = vi.fn();
     const router = createBackendTtsRouter({
@@ -58,7 +72,7 @@ describe('createBackendTtsRouter', () => {
       getSettings: async () => ({
         backendUrl: 'http://127.0.0.1:8787',
         backendApiKey: 'k',
-        ttsProvider: 'backend',
+        ttsProvider: 'zerotts',
       }),
     });
     const result = await router.synthesize('   ', DEFAULT_HOAI_MY_VOICE);
@@ -72,23 +86,6 @@ describe('createBackendTtsRouter', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('returns WEB_SPEECH_REQUIRED when ttsProvider is web-speech', async () => {
-    const fetchFn = vi.fn();
-    const router = createBackendTtsRouter({
-      fetchFn,
-      getSettings: async () => ({
-        backendUrl: 'http://127.0.0.1:8787',
-        backendApiKey: 'k',
-        ttsProvider: 'web-speech',
-      }),
-    });
-    const result = await router.synthesize('Hi', DEFAULT_HOAI_MY_VOICE);
-    expect(result.success).toBe(false);
-    if (result.success) throw new Error('expected web-speech short-circuit');
-    expect(result.code).toBe('WEB_SPEECH_REQUIRED');
-    expect(fetchFn).not.toHaveBeenCalled();
-  });
-
   it('opens breaker after 3 consecutive failures and stops fetching', async () => {
     const fetchFn = vi.fn().mockRejectedValue(new Error('down'));
     const router = createBackendTtsRouter({
@@ -96,7 +93,7 @@ describe('createBackendTtsRouter', () => {
       getSettings: async () => ({
         backendUrl: 'http://127.0.0.1:8787',
         backendApiKey: 'k',
-        ttsProvider: 'backend',
+        ttsProvider: 'zerotts',
       }),
     });
     for (let i = 0; i < 3; i++) {
@@ -138,22 +135,5 @@ describe('BackgroundDubbingTtsClient (no in-page Edge fallback)', () => {
     const { BackgroundDubbingTtsClient } = await import('../src/core/tts/background-tts-client');
     const client = new BackgroundDubbingTtsClient();
     await expect(client.synthesize('Hi')).rejects.toThrow(/breaker open/);
-  });
-
-  it('speaks via Web Speech on WEB_SPEECH_REQUIRED and does not return an audio blob', async () => {
-    const { sendExtensionMessage } = await import('../src/core/extension-runtime');
-    vi.mocked(sendExtensionMessage).mockResolvedValueOnce({
-      success: false,
-      code: 'WEB_SPEECH_REQUIRED',
-      error: 'Web Speech TTS selected; synthesize in page',
-    });
-    const speak = vi.fn().mockResolvedValue(undefined);
-    const { BackgroundDubbingTtsClient } = await import('../src/core/tts/background-tts-client');
-    const client = new BackgroundDubbingTtsClient({
-      webSpeech: { speak },
-    });
-    await expect(client.synthesize('Xin chào')).rejects.toThrow(/WEB_SPEECH_REQUIRED|Web Speech/);
-    expect(speak).toHaveBeenCalledTimes(1);
-    expect(speak.mock.calls[0][0]).toBe('Xin chào');
   });
 });

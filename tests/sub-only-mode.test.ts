@@ -7,7 +7,6 @@ import {
 } from '@/entrypoints/content/orchestrator-coordinator';
 import { SegmentCache } from '@/storage/segment-cache';
 import { TranscriptFetcher } from '@/core/transcript/fetcher';
-import { GroqWhisperClient } from '@/core/stt';
 import { BackgroundDubbingTtsClient } from '@/core/tts/background-tts-client';
 import { mountHud, type HudInstance } from '@/entrypoints/content/mount';
 import { tryMount, resetActiveInstanceForTesting } from '@/entrypoints/content/index';
@@ -18,7 +17,6 @@ import { fireEvent } from '@testing-library/react';
 
 vi.mock('@/storage/segment-cache');
 vi.mock('@/core/transcript/fetcher');
-vi.mock('@/core/stt');
 vi.mock('@/core/tts/background-tts-client');
 
 function makeVideo(paused = false): HTMLVideoElement {
@@ -196,7 +194,7 @@ describe('Sub-Only Mode Pipeline (Issue #18 / ADR-0012)', () => {
   });
 
   describe('Captionless Video Handling Without Whisper Fallback', () => {
-    it('stops without invoking Groq Whisper when native captions are unavailable', async () => {
+    it('stops cleanly when native captions are unavailable', async () => {
       // Cache miss
       vi.mocked(SegmentCache).prototype.getTranscript = vi.fn().mockResolvedValue(null);
 
@@ -219,9 +217,6 @@ describe('Sub-Only Mode Pipeline (Issue #18 / ADR-0012)', () => {
         'vi',
         { subtitleInstance: subInstance }
       );
-
-      // Whisper fallback MUST NOT be invoked in Sub-Only Mode
-      expect(GroqWhisperClient).not.toHaveBeenCalled();
 
       // UI state marks captions as unavailable
       expect(instance.updateProps).toHaveBeenCalledWith(

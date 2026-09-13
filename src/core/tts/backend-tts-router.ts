@@ -2,22 +2,19 @@
  * BackendTtsRouter
  *
  * Routes TTS synthesis to the Self-hosted Backend (`POST {backendUrl}/v1/tts`)
- * from the MV3 service worker. Never opens a Bing WebSocket from Chrome.
+ * from the MV3 service worker. Strictly uses Self-hosted Backend (ADR-0013).
  *
  * Session breaker: 3 consecutive HTTP/network failures stop further fetches
  * until `resetBreaker()` (successful Ping or explicit reset). While open,
  * synthesize responds `BACKEND_TTS_UNAVAILABLE` so the orchestrator skips
- * the cue instead of stacking voices. When `ttsProvider` is `web-speech`,
- * no fetch is made and `WEB_SPEECH_REQUIRED` is returned so the content
- * script can speak via `WebSpeechFallback` without feeding a dummy blob
- * into the Playback Sync Engine.
+ * the cue instead of stacking voices.
  */
 
 import type { VoiceProfile } from '../../types/domain';
 import { defaultFetch } from '../default-fetch';
 import { arrayBufferToBase64 } from './base64';
 
-export type BackendTtsErrorCode = 'WEB_SPEECH_REQUIRED' | 'BACKEND_TTS_UNAVAILABLE';
+export type BackendTtsErrorCode = 'BACKEND_TTS_UNAVAILABLE';
 
 export interface BackendTtsSuccess {
   success: true;
@@ -36,7 +33,7 @@ export type SynthesizeTtsResult = BackendTtsSuccess | BackendTtsFailure;
 export interface BackendTtsRouterSettings {
   backendUrl: string;
   backendApiKey: string;
-  ttsProvider: string;
+  ttsProvider?: string;
 }
 
 export interface BackendTtsRouterOptions {
@@ -70,13 +67,6 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
 
     async synthesize(text: string, voice: VoiceProfile): Promise<SynthesizeTtsResult> {
       const settings = await options.getSettings();
-      if (settings.ttsProvider === 'web-speech') {
-        return {
-          success: false,
-          code: 'WEB_SPEECH_REQUIRED',
-          error: 'Web Speech TTS selected; synthesize in page',
-        };
-      }
 
       if (consecutiveFailures >= BREAKER_FAILURE_THRESHOLD) {
         return {
@@ -99,6 +89,7 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), fetchTimeoutMs);
       try {
+        const engine = settings.ttsProvider ?? 'zerotts';
         const response = await fetchFn(`${base}/v1/tts`, {
           method: 'POST',
           headers: {
@@ -111,7 +102,7 @@ export function createBackendTtsRouter(options: BackendTtsRouterOptions): Backen
             voice: voice.voiceKey ?? voice.id,
             rate: voice.rate ?? '+0%',
             format: 'mp3',
-            engine: settings.ttsProvider === 'edge' ? 'edge' : 'piper',
+            engine,
           }),
           signal: controller.signal,
         });

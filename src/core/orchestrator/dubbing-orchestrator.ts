@@ -41,6 +41,7 @@ export interface DubbingOrchestratorDeps {
   femaleVoice?: string;
   maleVoice?: string;
   diarizationEnabled?: boolean;
+  onTtsError?: (err: unknown) => void;
 }
 
 export class DubbingOrchestratorImpl implements DubbingOrchestrator {
@@ -67,6 +68,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
   private femaleVoice: string;
   private maleVoice: string;
   private diarizationEnabled: boolean;
+  private readonly onTtsError?: (err: unknown) => void;
 
   /** Lookahead TTS diagnostics & concurrency control. */
   private inFlightTtsCount = 0;
@@ -82,6 +84,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
     this.femaleVoice = deps?.femaleVoice ?? 'vi-VN-HoaiMyNeural';
     this.maleVoice = deps?.maleVoice ?? 'vi-VN-NamMinhNeural';
     this.diarizationEnabled = deps?.diarizationEnabled ?? false;
+    this.onTtsError = deps?.onTtsError;
     this.ducker = new AudioDucker(media);
     this.stretcher = new TimeStretcher();
     this.syncEngine = new PlaybackSyncEngine();
@@ -313,6 +316,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
         return blob;
       } catch (err: any) {
         this.reportTtsFailure(segment.id, err?.message || String(err), text);
+        this.onTtsError?.(err);
         return undefined;
       }
     }
@@ -495,6 +499,7 @@ export class DubbingOrchestratorImpl implements DubbingOrchestrator {
       })
       .catch((err) => {
         this.handleSegmentTtsFailure(seg.id, err?.message || String(err), text);
+        this.onTtsError?.(err);
       })
       .finally(() => {
         this.inFlightTtsCount = Math.max(0, this.inFlightTtsCount - 1);

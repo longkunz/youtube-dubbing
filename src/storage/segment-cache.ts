@@ -2,7 +2,7 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { Transcript } from '../types/domain';
 import type { TranslationProvider } from './settings';
 
-const DEFAULT_CACHE_PROVIDER: TranslationProvider = 'gemini';
+const DEFAULT_CACHE_PROVIDER: TranslationProvider = 'self-hosted';
 
 // ---------------------------------------------------------------------------
 // Public Types

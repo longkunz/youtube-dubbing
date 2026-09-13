@@ -249,13 +249,11 @@ describe('Shadow DOM In-Player HUD Mount Seam', () => {
     const cockpit = shadowRoot.querySelector('.cyber-cockpit') as HTMLElement;
     expect(cockpit.classList.contains('open')).toBe(true);
 
-    // Language Selector
+    // Language Selector (locked to vi)
     const langSelect = shadowRoot.querySelector('.cyber-select') as HTMLSelectElement;
     expect(langSelect).not.toBeNull();
-    await act(async () => {
-      fireEvent.change(langSelect, { target: { value: 'en' } });
-    });
-    expect(mockOrchestrator.setTargetLanguage).toHaveBeenCalledWith('en');
+    expect(langSelect.value).toBe('vi');
+    expect(langSelect.disabled).toBe(true);
 
     // Voice Matrix Selection
     const namMinhCard = Array.from(shadowRoot.querySelectorAll('.voice-card')).find((card) =>
