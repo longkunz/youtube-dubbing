@@ -96,4 +96,9 @@ _Avoid_: Dual CC, bilingual subs, sub hack, caption merger, double subtitle
 The user-customized, percentage-based spatial coordinates of the Parallel Caption Overlay relative to the host video player, bounded within the player viewport, persisted in extension storage across fullscreen/theater resizes, and resettable via double-click or Command Center.
 _Avoid_: Absolute pixel coordinate, sub offset, fixed position, drag state
 
+**Subtitle Learning Suite**:
+The collection of interactive pedagogical controls embedded in the In-Page Command Center and subtitle pipeline, featuring independent dual-line font sliders, customizable color palettes, background opacity control, live previewing, automatic playback pause at segment boundaries for repetition practice, and keyboard navigation hotkeys (A/S/D).
+_Avoid_: Study mode, language hack, ejoy clone, learner settings
+
+
 
