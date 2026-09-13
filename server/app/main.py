@@ -5,7 +5,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.auth import require_bearer
-from app.lang import normalize_lang
+from app.lang import is_supported_source, normalize_lang
+from app.translate import DelimiterMismatchError
 
 log = logging.getLogger("uvicorn.error")
 
@@ -37,15 +38,17 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
             raise HTTPException(status_code=400, detail="cues must be a non-empty list")
         if len(cues) > 50:
             raise HTTPException(status_code=400, detail="cues cannot exceed 50 items")
-        if source != "en" or target != "vi":
-            if source == target and source:
-                items = [{"id": str(c.get("id", "")), "text": str(c.get("text") or "").strip()} for c in cues]
-                return {"items": items}
-            raise HTTPException(status_code=400, detail="V1 only supports EN→VI translation")
         for cue in cues:
             text = str(cue.get("text") or "")
             if len(text) > 2000:
                 raise HTTPException(status_code=400, detail="cue text cannot exceed 2000 characters")
+        if target != "vi":
+            raise HTTPException(status_code=400, detail="target must be vi")
+        if source == "vi":
+            items = [{"id": str(c.get("id", "")), "text": str(c.get("text") or "").strip()} for c in cues]
+            return {"items": items}
+        if not is_supported_source(source):
+            raise HTTPException(status_code=400, detail="unsupported source language")
         if app.state.translator is None:
             raise HTTPException(status_code=503, detail="translator unavailable")
         items = []
@@ -62,7 +65,13 @@ def create_app(*, api_key: str, translator=None, tts_engine=None) -> FastAPI:
             to_model.append(stripped)
             to_model_idx.append(len(items) - 1)
         if to_model:
-            translated = app.state.translator.translate_texts(to_model)
+            try:
+                translated = app.state.translator.translate_texts(to_model, source=source)
+            except DelimiterMismatchError:
+                raise HTTPException(status_code=502, detail="delimiter count mismatch")
+            except Exception:
+                log.exception("translate failed source=%s count=%s", source, len(to_model))
+                raise HTTPException(status_code=502, detail="translation failed")
             for idx, text in zip(to_model_idx, translated):
                 items[idx]["text"] = text
         return {"items": items}
