@@ -84,6 +84,28 @@ describe('In-Page Command Center Slide-Over Drawer (Issue #17)', () => {
       expect(document.querySelector('[data-aetherdub-command-center-host="true"]')).toBeNull();
     });
 
+    it('injects styles for inputs and forms into the shadow root', async () => {
+      let instance: ReturnType<typeof mountCommandCenter> = null as any;
+      await act(async () => {
+        instance = mountCommandCenter();
+        instance.open();
+      });
+
+      const shadowRoot = instance.shadowRoot;
+      const styleEl = shadowRoot.querySelector('style[data-aetherdub-command-center-style="true"]');
+      expect(styleEl).not.toBeNull();
+      const styleText = styleEl?.textContent || '';
+
+      // Must include styles targeting input fields in the command center body
+      expect(styleText).toMatch(/\.command-center-body\s+input|input\[type=["']?text["']?\]/i);
+      expect(styleText).toMatch(/#05070e/i);
+      expect(styleText).toMatch(/#00f2fe/i);
+
+      await act(async () => {
+        instance.unmount();
+      });
+    });
+
     it('mounts inside document.fullscreenElement when video is in fullscreen', async () => {
       const fullscreenContainer = document.createElement('div');
       fullscreenContainer.id = 'player-fullscreen';

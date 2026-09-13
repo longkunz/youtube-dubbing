@@ -47,7 +47,7 @@ export function mountCommandCenter(options?: CommandCenterMountOptions): Command
 
   const shadowRoot = hostEl.attachShadow({ mode: 'open' });
 
-  // Inject scoped sci-fi stylesheet
+  // Inject scoped sci-fi stylesheet (complete drawer & dashboard styles)
   const styleEl = document.createElement('style');
   styleEl.setAttribute('data-aetherdub-command-center-style', 'true');
   styleEl.textContent = COMMAND_CENTER_STYLES;
