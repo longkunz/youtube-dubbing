@@ -15,22 +15,125 @@ import {
   saveSettings,
   subscribeToSettings,
   normalizeSettings,
+  DEFAULT_USER_SETTINGS,
+  type UserSettings,
 } from '@/storage/settings';
 
 export type { SubtitleDisplayMode, SubtitleLineOrder, SubtitleFontSize, SubtitlePosition };
 
-export interface SubtitleMountProps extends SubtitleOverlayProps {}
+export interface SubtitleMountProps extends SubtitleOverlayProps {
+  segments?: Segment[];
+  videoElement?: HTMLVideoElement | null;
+  autoPauseEnabled?: boolean;
+  hotkeysEnabled?: boolean;
+}
 
 export interface SubtitleOverlayInstance {
   unmount: () => void;
+  destroy?: () => void;
   isMounted: () => boolean;
   shadowRoot: ShadowRoot;
   hostEl: HTMLElement;
   updateProps: (props: Partial<SubtitleMountProps>) => void;
   setSegment: (segment: Segment | null) => void;
+  setSegments?: (segments: Segment[]) => void;
   setVisible: (visible: boolean) => void;
   setPosition: (pos: SubtitlePosition | null) => void;
   resetPosition: () => void;
+  getSegments?: () => Segment[];
+  getVideo?: () => HTMLVideoElement | null;
+}
+
+export function getSegmentStartTime(segment: Segment): number {
+  return (segment as any).startSec ?? segment.startTime ?? 0;
+}
+
+export function getSegmentEndTime(segment: Segment): number {
+  return (segment as any).endSec ?? segment.endTime ?? 0;
+}
+
+export function shouldAutoPause(
+  segment: Segment | null | undefined,
+  currentTime: number,
+  lastAutoPausedSegmentId: string | null,
+  autoPauseEnabled: boolean
+): boolean {
+  if (!autoPauseEnabled || !segment) return false;
+  if (lastAutoPausedSegmentId === segment.id) return false;
+  const endSec = getSegmentEndTime(segment);
+  return currentTime >= endSec - 0.1 && currentTime <= endSec + 0.3;
+}
+
+export function findSegmentBefore(segments: Segment[], currentTime: number): Segment | null {
+  if (!segments || segments.length === 0) return null;
+  const activeIndex = segments.findIndex((s) => {
+    const start = getSegmentStartTime(s);
+    const end = getSegmentEndTime(s);
+    return currentTime >= start && currentTime <= end;
+  });
+
+  if (activeIndex > 0) {
+    return segments[activeIndex - 1];
+  }
+  if (activeIndex === 0) {
+    return segments[0];
+  }
+
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (getSegmentStartTime(segments[i]) < currentTime) {
+      return segments[i];
+    }
+  }
+  return null;
+}
+
+function distanceToSegment(s: Segment, currentTime: number): number {
+  const start = getSegmentStartTime(s);
+  const end = getSegmentEndTime(s);
+  if (currentTime >= start && currentTime <= end) return 0;
+  if (currentTime < start) return start - currentTime;
+  return currentTime - end;
+}
+
+export function findSegmentAtOrNearest(segments: Segment[], currentTime: number): Segment | null {
+  if (!segments || segments.length === 0) return null;
+  const active = segments.find((s) => {
+    const start = getSegmentStartTime(s);
+    const end = getSegmentEndTime(s);
+    return currentTime >= start && currentTime <= end;
+  });
+  if (active) return active;
+
+  let nearest = segments[0];
+  let minDiff = distanceToSegment(segments[0], currentTime);
+  for (let i = 1; i < segments.length; i++) {
+    const diff = distanceToSegment(segments[i], currentTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = segments[i];
+    }
+  }
+  return nearest;
+}
+
+export function findSegmentAfter(segments: Segment[], currentTime: number): Segment | null {
+  if (!segments || segments.length === 0) return null;
+  const activeIndex = segments.findIndex((s) => {
+    const start = getSegmentStartTime(s);
+    const end = getSegmentEndTime(s);
+    return currentTime >= start && currentTime <= end;
+  });
+
+  if (activeIndex !== -1 && activeIndex + 1 < segments.length) {
+    return segments[activeIndex + 1];
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    if (getSegmentStartTime(segments[i]) > currentTime) {
+      return segments[i];
+    }
+  }
+  return null;
 }
 
 const NATIVE_CC_STYLE_ID = 'aetherdub-native-cc-suppression';
@@ -243,6 +346,117 @@ export function mountSubtitleOverlay(
   renderComponent();
   container.appendChild(hostEl);
 
+  let currentSettings: UserSettings = { ...DEFAULT_USER_SETTINGS };
+  let currentSegments: Segment[] = initialProps?.segments ?? [];
+  if (initialProps?.segment && currentSegments.length === 0) {
+    currentSegments = [initialProps.segment];
+  }
+
+  const getVideo = (): HTMLVideoElement | null => {
+    return (
+      currentProps.videoElement ??
+      (container.querySelector('video') as HTMLVideoElement | null) ??
+      (typeof document !== 'undefined' ? (document.querySelector('video') as HTMLVideoElement | null) : null)
+    );
+  };
+
+  let lastAutoPausedSegmentId: string | null = null;
+
+  const checkAutoPause = (currentTime: number) => {
+    const isAutoPauseEnabled =
+      currentProps.autoPauseEnabled ?? currentSettings.subtitleAutoPause;
+    if (!isAutoPauseEnabled) return;
+
+    const seg = currentProps.segment ?? currentProps.activeSegment;
+    if (!seg) return;
+
+    if (shouldAutoPause(seg, currentTime, lastAutoPausedSegmentId, true)) {
+      const video = getVideo();
+      if (video) {
+        video.pause();
+        lastAutoPausedSegmentId = seg.id;
+      }
+    } else {
+      const endSec = getSegmentEndTime(seg);
+      if (lastAutoPausedSegmentId === seg.id && (currentTime < endSec - 0.2 || currentTime > endSec + 0.5)) {
+        lastAutoPausedSegmentId = null;
+      }
+    }
+  };
+
+  const onTimeUpdate = () => {
+    const video = getVideo();
+    if (video) {
+      checkAutoPause(video.currentTime);
+    }
+  };
+
+  let boundVideo: HTMLVideoElement | null = null;
+  const attachVideo = (v: HTMLVideoElement | null) => {
+    if (boundVideo && boundVideo !== v) {
+      boundVideo.removeEventListener('timeupdate', onTimeUpdate);
+    }
+    boundVideo = v;
+    if (boundVideo) {
+      boundVideo.addEventListener('timeupdate', onTimeUpdate);
+    }
+  };
+
+  attachVideo(getVideo());
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    const isEditable =
+      target &&
+      (target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable ||
+        target.getAttribute?.('contenteditable') === 'true');
+    if (isEditable) return;
+
+    const isHotkeysEnabled =
+      currentProps.hotkeysEnabled ?? currentSettings.subtitleHotkeysEnabled;
+    if (!isHotkeysEnabled) return;
+
+    const key = e.key.toLowerCase();
+    if (key !== 'a' && key !== 's' && key !== 'd') return;
+
+    const video = getVideo();
+    if (!video) return;
+
+    const segs = currentProps.segments ?? currentSegments;
+    if (!segs || segs.length === 0) return;
+
+    const currentTime = video.currentTime;
+
+    if (key === 'a') {
+      const prev = findSegmentBefore(segs, currentTime);
+      if (prev) {
+        e.preventDefault();
+        e.stopPropagation();
+        video.currentTime = getSegmentStartTime(prev);
+      }
+    } else if (key === 's') {
+      const curr = findSegmentAtOrNearest(segs, currentTime);
+      if (curr) {
+        e.preventDefault();
+        e.stopPropagation();
+        video.currentTime = getSegmentStartTime(curr);
+      }
+    } else if (key === 'd') {
+      const next = findSegmentAfter(segs, currentTime);
+      if (next) {
+        e.preventDefault();
+        e.stopPropagation();
+        video.currentTime = getSegmentStartTime(next);
+      }
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('keydown', handleKeyDown);
+  }
+
   let storageListener: ((changes: Record<string, any>, areaName: string) => void) | null = null;
   let unsubscribeSettings: (() => void) | null = null;
 
@@ -254,6 +468,13 @@ export function mountSubtitleOverlay(
     unmount: () => {
       if (!mounted) return;
       mounted = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('keydown', handleKeyDown);
+      }
+      if (boundVideo) {
+        boundVideo.removeEventListener('timeupdate', onTimeUpdate);
+        boundVideo = null;
+      }
       classObserver?.disconnect();
       classObserver = null;
       unsubscribeSettings?.();
@@ -274,6 +495,9 @@ export function mountSubtitleOverlay(
         activeSubtitleInstance = null;
       }
     },
+    destroy: () => {
+      instance.unmount();
+    },
     isMounted: () => mounted && (hostEl.isConnected ?? true),
     shadowRoot,
     hostEl,
@@ -281,12 +505,56 @@ export function mountSubtitleOverlay(
       for (const k of Object.keys(newProps)) {
         explicitlySet.add(k);
       }
+      if (newProps.segments) {
+        currentSegments = newProps.segments;
+      }
+      if (
+        (newProps.fontSizeScale && newProps.originalFontSize === undefined) ||
+        ('originalFontSize' in newProps && newProps.originalFontSize === undefined)
+      ) {
+        delete currentProps.originalFontSize;
+        explicitlySet.delete('originalFontSize');
+      }
+      if (
+        (newProps.fontSizeScale && newProps.translatedFontSize === undefined) ||
+        ('translatedFontSize' in newProps && newProps.translatedFontSize === undefined)
+      ) {
+        delete currentProps.translatedFontSize;
+        explicitlySet.delete('translatedFontSize');
+      }
       currentProps = { ...currentProps, ...newProps };
+      if (
+        (newProps.fontSizeScale && newProps.originalFontSize === undefined) ||
+        ('originalFontSize' in newProps && newProps.originalFontSize === undefined)
+      ) {
+        delete currentProps.originalFontSize;
+      }
+      if (
+        (newProps.fontSizeScale && newProps.translatedFontSize === undefined) ||
+        ('translatedFontSize' in newProps && newProps.translatedFontSize === undefined)
+      ) {
+        delete currentProps.translatedFontSize;
+      }
+      if (newProps.videoElement !== undefined) {
+        attachVideo(getVideo());
+      }
       renderComponent();
     },
     setSegment: (segment: Segment | null) => {
       currentProps = { ...currentProps, segment };
+      if (segment && !currentSegments.some((s) => s.id === segment.id)) {
+        currentSegments = [...currentSegments, segment];
+      }
+      attachVideo(getVideo());
+      const video = getVideo();
+      if (video) {
+        checkAutoPause(video.currentTime);
+      }
       renderComponent();
+    },
+    setSegments: (segments: Segment[]) => {
+      currentSegments = segments;
+      currentProps = { ...currentProps, segments };
     },
     setVisible: (visible: boolean) => {
       currentProps = { ...currentProps, visible };
@@ -299,6 +567,8 @@ export function mountSubtitleOverlay(
       applyPosition(null);
       void saveSettings({ subtitlePosition: null });
     },
+    getSegments: () => currentSegments,
+    getVideo: () => getVideo(),
   };
 
   (hostEl as any).__aetherdub_subtitle_instance = instance;
@@ -308,6 +578,7 @@ export function mountSubtitleOverlay(
   getSettings()
     .then((settings) => {
       if (!mounted) return;
+      currentSettings = { ...settings };
       if (settings.subtitlePosition) {
         applyPosition(settings.subtitlePosition);
       }
@@ -321,6 +592,34 @@ export function mountSubtitleOverlay(
       if (!explicitlySet.has('fontSizeScale')) {
         toApply.fontSizeScale = settings.subtitleFontSize;
       }
+      if (!explicitlySet.has('originalFontSize') && !explicitlySet.has('fontSizeScale')) {
+        if (settings.subtitleFontSize === 'standard' || settings.subtitleOriginalFontSize !== DEFAULT_USER_SETTINGS.subtitleOriginalFontSize) {
+          toApply.originalFontSize = settings.subtitleOriginalFontSize;
+        }
+      }
+      if (!explicitlySet.has('translatedFontSize') && !explicitlySet.has('fontSizeScale')) {
+        if (settings.subtitleFontSize === 'standard' || settings.subtitleTranslatedFontSize !== DEFAULT_USER_SETTINGS.subtitleTranslatedFontSize) {
+          toApply.translatedFontSize = settings.subtitleTranslatedFontSize;
+        }
+      }
+      if (!explicitlySet.has('originalColor')) {
+        toApply.originalColor = settings.subtitleOriginalColor;
+      }
+      if (!explicitlySet.has('translatedColor')) {
+        toApply.translatedColor = settings.subtitleTranslatedColor;
+      }
+      if (!explicitlySet.has('backgroundOpacity')) {
+        toApply.backgroundOpacity = settings.subtitleBackgroundOpacity;
+      }
+      if (!explicitlySet.has('textShadowEnabled')) {
+        toApply.textShadowEnabled = settings.subtitleTextShadow;
+      }
+      if (!explicitlySet.has('autoPauseEnabled')) {
+        toApply.autoPauseEnabled = settings.subtitleAutoPause;
+      }
+      if (!explicitlySet.has('hotkeysEnabled')) {
+        toApply.hotkeysEnabled = settings.subtitleHotkeysEnabled;
+      }
       if (Object.keys(toApply).length > 0) {
         currentProps = { ...currentProps, ...toApply };
         renderComponent();
@@ -331,14 +630,28 @@ export function mountSubtitleOverlay(
   // Listen for settings updates via in-memory subscription
   unsubscribeSettings = subscribeToSettings((settings) => {
     if (!mounted) return;
+    currentSettings = { ...currentSettings, ...settings };
     if ('subtitlePosition' in settings) {
       applyPosition(settings.subtitlePosition ?? null);
     }
-    getActiveSubtitleInstance()?.updateProps({
+    const updatedProps: Partial<SubtitleMountProps> = {
       displayMode: settings.subtitleDisplayMode,
       lineOrder: settings.subtitleLineOrder,
       fontSizeScale: settings.subtitleFontSize,
-    });
+      originalColor: settings.subtitleOriginalColor,
+      translatedColor: settings.subtitleTranslatedColor,
+      backgroundOpacity: settings.subtitleBackgroundOpacity,
+      textShadowEnabled: settings.subtitleTextShadow,
+      autoPauseEnabled: settings.subtitleAutoPause,
+      hotkeysEnabled: settings.subtitleHotkeysEnabled,
+    };
+    if (settings.subtitleFontSize === 'standard' || settings.subtitleOriginalFontSize !== DEFAULT_USER_SETTINGS.subtitleOriginalFontSize) {
+      updatedProps.originalFontSize = settings.subtitleOriginalFontSize;
+    }
+    if (settings.subtitleFontSize === 'standard' || settings.subtitleTranslatedFontSize !== DEFAULT_USER_SETTINGS.subtitleTranslatedFontSize) {
+      updatedProps.translatedFontSize = settings.subtitleTranslatedFontSize;
+    }
+    getActiveSubtitleInstance()?.updateProps(updatedProps);
   });
 
   // Listen for settings updates via chrome.storage.onChanged
@@ -346,14 +659,28 @@ export function mountSubtitleOverlay(
     storageListener = (changes: Record<string, any>, areaName: string) => {
       if (areaName === 'local' && changes.userSettings?.newValue && mounted) {
         const updated = normalizeSettings(changes.userSettings.newValue);
+        currentSettings = { ...updated };
         if ('subtitlePosition' in updated) {
           applyPosition(updated.subtitlePosition ?? null);
         }
-        getActiveSubtitleInstance()?.updateProps({
+        const updatedProps: Partial<SubtitleMountProps> = {
           displayMode: updated.subtitleDisplayMode,
           lineOrder: updated.subtitleLineOrder,
           fontSizeScale: updated.subtitleFontSize,
-        });
+          originalColor: updated.subtitleOriginalColor,
+          translatedColor: updated.subtitleTranslatedColor,
+          backgroundOpacity: updated.subtitleBackgroundOpacity,
+          textShadowEnabled: updated.subtitleTextShadow,
+          autoPauseEnabled: updated.subtitleAutoPause,
+          hotkeysEnabled: updated.subtitleHotkeysEnabled,
+        };
+        if (updated.subtitleFontSize === 'standard' || updated.subtitleOriginalFontSize !== DEFAULT_USER_SETTINGS.subtitleOriginalFontSize) {
+          updatedProps.originalFontSize = updated.subtitleOriginalFontSize;
+        }
+        if (updated.subtitleFontSize === 'standard' || updated.subtitleTranslatedFontSize !== DEFAULT_USER_SETTINGS.subtitleTranslatedFontSize) {
+          updatedProps.translatedFontSize = updated.subtitleTranslatedFontSize;
+        }
+        getActiveSubtitleInstance()?.updateProps(updatedProps);
       }
     };
     (chrome.storage as any).onChanged.addListener(storageListener);

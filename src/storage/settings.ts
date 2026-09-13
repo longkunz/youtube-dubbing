@@ -38,6 +38,14 @@ export interface UserSettings {
   subtitleLineOrder: SubtitleLineOrder;
   subtitleFontSize: SubtitleFontSize;
   subtitlePosition?: SubtitlePosition | null;
+  subtitleOriginalFontSize: number;
+  subtitleTranslatedFontSize: number;
+  subtitleOriginalColor: string;
+  subtitleTranslatedColor: string;
+  subtitleBackgroundOpacity: number;
+  subtitleTextShadow: boolean;
+  subtitleAutoPause: boolean;
+  subtitleHotkeysEnabled: boolean;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -52,7 +60,17 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   subtitleLineOrder: 'original-first',
   subtitleFontSize: 'standard',
   subtitlePosition: null,
+  subtitleOriginalFontSize: 18,
+  subtitleTranslatedFontSize: 15,
+  subtitleOriginalColor: '#ffffff',
+  subtitleTranslatedColor: '#00f2fe',
+  subtitleBackgroundOpacity: 78,
+  subtitleTextShadow: true,
+  subtitleAutoPause: false,
+  subtitleHotkeysEnabled: false,
 };
+
+const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
 
 export function normalizeSettings(input: Partial<UserSettings> | undefined): UserSettings {
   const merged: UserSettings = { ...DEFAULT_USER_SETTINGS, ...(input ?? {}) };
@@ -100,6 +118,68 @@ export function normalizeSettings(input: Partial<UserSettings> | undefined): Use
   } else {
     merged.subtitlePosition = null;
   }
+
+  // Numeric clamping
+  if (typeof input?.subtitleOriginalFontSize === 'number' && !Number.isNaN(input.subtitleOriginalFontSize)) {
+    merged.subtitleOriginalFontSize = Math.max(12, Math.min(36, Math.round(input.subtitleOriginalFontSize)));
+  } else if (typeof merged.subtitleOriginalFontSize === 'number' && !Number.isNaN(merged.subtitleOriginalFontSize)) {
+    merged.subtitleOriginalFontSize = Math.max(12, Math.min(36, Math.round(merged.subtitleOriginalFontSize)));
+  } else {
+    merged.subtitleOriginalFontSize = 18;
+  }
+
+  if (typeof input?.subtitleTranslatedFontSize === 'number' && !Number.isNaN(input.subtitleTranslatedFontSize)) {
+    merged.subtitleTranslatedFontSize = Math.max(10, Math.min(30, Math.round(input.subtitleTranslatedFontSize)));
+  } else if (typeof merged.subtitleTranslatedFontSize === 'number' && !Number.isNaN(merged.subtitleTranslatedFontSize)) {
+    merged.subtitleTranslatedFontSize = Math.max(10, Math.min(30, Math.round(merged.subtitleTranslatedFontSize)));
+  } else {
+    merged.subtitleTranslatedFontSize = 15;
+  }
+
+  if (typeof input?.subtitleBackgroundOpacity === 'number' && !Number.isNaN(input.subtitleBackgroundOpacity)) {
+    merged.subtitleBackgroundOpacity = Math.max(0, Math.min(100, Math.round(input.subtitleBackgroundOpacity)));
+  } else if (typeof merged.subtitleBackgroundOpacity === 'number' && !Number.isNaN(merged.subtitleBackgroundOpacity)) {
+    merged.subtitleBackgroundOpacity = Math.max(0, Math.min(100, Math.round(merged.subtitleBackgroundOpacity)));
+  } else {
+    merged.subtitleBackgroundOpacity = 78;
+  }
+
+  // Color validation
+  if (typeof input?.subtitleOriginalColor === 'string' && HEX_COLOR_REGEX.test(input.subtitleOriginalColor)) {
+    merged.subtitleOriginalColor = input.subtitleOriginalColor.toLowerCase();
+  } else if (typeof merged.subtitleOriginalColor === 'string' && HEX_COLOR_REGEX.test(merged.subtitleOriginalColor)) {
+    merged.subtitleOriginalColor = merged.subtitleOriginalColor.toLowerCase();
+  } else {
+    merged.subtitleOriginalColor = '#ffffff';
+  }
+
+  if (typeof input?.subtitleTranslatedColor === 'string' && HEX_COLOR_REGEX.test(input.subtitleTranslatedColor)) {
+    merged.subtitleTranslatedColor = input.subtitleTranslatedColor.toLowerCase();
+  } else if (typeof merged.subtitleTranslatedColor === 'string' && HEX_COLOR_REGEX.test(merged.subtitleTranslatedColor)) {
+    merged.subtitleTranslatedColor = merged.subtitleTranslatedColor.toLowerCase();
+  } else {
+    merged.subtitleTranslatedColor = '#00f2fe';
+  }
+
+  // Boolean flags
+  if (input && typeof input.subtitleTextShadow === 'boolean') {
+    merged.subtitleTextShadow = input.subtitleTextShadow;
+  } else if (typeof merged.subtitleTextShadow !== 'boolean') {
+    merged.subtitleTextShadow = true;
+  }
+
+  if (input && typeof input.subtitleAutoPause === 'boolean') {
+    merged.subtitleAutoPause = input.subtitleAutoPause;
+  } else if (typeof merged.subtitleAutoPause !== 'boolean') {
+    merged.subtitleAutoPause = false;
+  }
+
+  if (input && typeof input.subtitleHotkeysEnabled === 'boolean') {
+    merged.subtitleHotkeysEnabled = input.subtitleHotkeysEnabled;
+  } else if (typeof merged.subtitleHotkeysEnabled !== 'boolean') {
+    merged.subtitleHotkeysEnabled = false;
+  }
+
   return merged;
 }
 
@@ -114,11 +194,11 @@ export async function getSettings(): Promise<UserSettings> {
     return new Promise<UserSettings>((resolve) => {
       chrome.storage.local.get('userSettings', (items: Record<string, unknown>) => {
         const stored = items?.userSettings as Partial<UserSettings> | undefined;
-        if (chrome.runtime?.lastError || !stored) {
-          resolve(normalizeSettings(stored ?? undefined));
-        } else {
-          resolve(normalizeSettings(stored));
-        }
+        const normalized = normalizeSettings(
+          chrome.runtime?.lastError || !stored ? undefined : stored
+        );
+        inMemorySettings = { ...normalized };
+        resolve(normalized);
       });
     });
   }
@@ -139,41 +219,49 @@ export function subscribeToSettings(listener: SettingsListener): () => void {
   };
 }
 
+let saveQueue: Promise<void> = Promise.resolve();
+
 /**
  * Persist partial or full user settings to chrome.storage.local
- * and update in-memory state.
+ * and update in-memory state. Concurrent calls within the same realm
+ * are serialized so rapid UI events do not race each other.
  */
 export async function saveSettings(settings: Partial<UserSettings>): Promise<void> {
-  const current = await getSettings();
-  const updated: UserSettings = normalizeSettings({
-    ...current,
-    ...settings,
-  });
-
-  inMemorySettings = { ...updated };
-
-  for (const listener of settingsListeners) {
-    try {
-      listener(updated);
-    } catch (e) {
-      console.error('[AetherDub] Error in settings listener:', e);
-    }
-  }
-
-  if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
-    await new Promise<void>((resolve, reject) => {
-      chrome.storage.local.set(
-        { userSettings: updated as unknown as Record<string, unknown> },
-        () => {
-          if (chrome.runtime?.lastError) {
-            reject(new Error(chrome.runtime.lastError.message ?? 'Failed to save settings'));
-          } else {
-            resolve();
-          }
-        }
-      );
+  const runSave = async () => {
+    const current = await getSettings();
+    const updated: UserSettings = normalizeSettings({
+      ...current,
+      ...settings,
     });
-  }
+
+    inMemorySettings = { ...updated };
+
+    for (const listener of settingsListeners) {
+      try {
+        listener(updated);
+      } catch (e) {
+        console.error('[AetherDub] Error in settings listener:', e);
+      }
+    }
+
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      await new Promise<void>((resolve, reject) => {
+        chrome.storage.local.set(
+          { userSettings: updated as unknown as Record<string, unknown> },
+          () => {
+            if (chrome.runtime?.lastError) {
+              reject(new Error(chrome.runtime.lastError.message ?? 'Failed to save settings'));
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+    }
+  };
+
+  saveQueue = saveQueue.then(runSave, runSave);
+  return saveQueue;
 }
 
 /**
@@ -181,6 +269,7 @@ export async function saveSettings(settings: Partial<UserSettings>): Promise<voi
  * Intended for test isolation.
  */
 export async function resetSettingsForTesting(): Promise<void> {
+  saveQueue = Promise.resolve();
   inMemorySettings = { ...DEFAULT_USER_SETTINGS };
 
   if (typeof chrome !== 'undefined' && chrome?.storage?.local) {

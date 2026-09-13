@@ -37,6 +37,8 @@ import {
 } from 'lucide-react';
 import { getActiveSubtitleInstance } from '../content/subtitle-mount';
 
+const COLOR_PRESETS = ['#ffffff', '#ffeb3b', '#00f2fe', '#00ff88', '#cbd5e1'];
+
 async function defaultResetTtsBreaker(): Promise<void> {
   await sendExtensionMessage({ action: 'RESET_TTS_BREAKER' }, 5_000);
 }
@@ -77,6 +79,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
   const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<SubtitleDisplayMode>('bilingual');
   const [subtitleLineOrder, setSubtitleLineOrder] = useState<SubtitleLineOrder>('original-first');
   const [subtitleFontSize, setSubtitleFontSize] = useState<SubtitleFontSize>('standard');
+  const [subtitleOriginalFontSize, setSubtitleOriginalFontSize] = useState<number>(18);
+  const [subtitleTranslatedFontSize, setSubtitleTranslatedFontSize] = useState<number>(15);
+  const [subtitleOriginalColor, setSubtitleOriginalColor] = useState<string>('#ffffff');
+  const [subtitleTranslatedColor, setSubtitleTranslatedColor] = useState<string>('#00f2fe');
+  const [subtitleBackgroundOpacity, setSubtitleBackgroundOpacity] = useState<number>(78);
+  const [subtitleTextShadow, setSubtitleTextShadow] = useState<boolean>(true);
+  const [subtitleAutoPause, setSubtitleAutoPause] = useState<boolean>(false);
+  const [subtitleHotkeysEnabled, setSubtitleHotkeysEnabled] = useState<boolean>(false);
   const [resetPositionStatus, setResetPositionStatus] = useState<string | null>(null);
 
   const [showBackendKey, setShowBackendKey] = useState(false);
@@ -120,6 +130,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       setSubtitleDisplayMode(saved.subtitleDisplayMode || 'bilingual');
       setSubtitleLineOrder(saved.subtitleLineOrder || 'original-first');
       setSubtitleFontSize(saved.subtitleFontSize || 'standard');
+      setSubtitleOriginalFontSize(saved.subtitleOriginalFontSize ?? 18);
+      setSubtitleTranslatedFontSize(saved.subtitleTranslatedFontSize ?? 15);
+      setSubtitleOriginalColor(saved.subtitleOriginalColor ?? '#ffffff');
+      setSubtitleTranslatedColor(saved.subtitleTranslatedColor ?? '#00f2fe');
+      setSubtitleBackgroundOpacity(saved.subtitleBackgroundOpacity ?? 78);
+      setSubtitleTextShadow(saved.subtitleTextShadow ?? true);
+      setSubtitleAutoPause(saved.subtitleAutoPause ?? false);
+      setSubtitleHotkeysEnabled(saved.subtitleHotkeysEnabled ?? false);
     });
 
     const loadMetrics = async () => {
@@ -167,6 +185,14 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
       subtitleDisplayMode,
       subtitleLineOrder,
       subtitleFontSize,
+      subtitleOriginalFontSize,
+      subtitleTranslatedFontSize,
+      subtitleOriginalColor,
+      subtitleTranslatedColor,
+      subtitleBackgroundOpacity,
+      subtitleTextShadow,
+      subtitleAutoPause,
+      subtitleHotkeysEnabled,
     });
     setSaveStatus('Credentials saved');
     setTimeout(() => {
@@ -562,103 +588,469 @@ export const OptionsDashboard: React.FC<OptionsDashboardProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <div>
-                <label
-                  htmlFor="subtitle-display-mode"
-                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                >
-                  Display Mode
-                </label>
-                <select
-                  id="subtitle-display-mode"
-                  data-testid="subtitle-display-mode-select"
-                  aria-label="Subtitle Display Mode"
-                  value={subtitleDisplayMode}
-                  onChange={(e) => {
-                    const next = e.target.value as SubtitleDisplayMode;
-                    setSubtitleDisplayMode(next);
-                    void saveSettings({ subtitleDisplayMode: next });
-                  }}
-                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                >
-                  <option value="bilingual">Bilingual (Both)</option>
-                  <option value="translated-only">Translated Only</option>
-                  <option value="original-only">Original Only</option>
-                </select>
+            <div className="space-y-6">
+              {/* Primary Selectors: Display Mode, Line Order, Font Size Scale */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div>
+                  <label
+                    htmlFor="subtitle-display-mode"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Display Mode
+                  </label>
+                  <select
+                    id="subtitle-display-mode"
+                    data-testid="subtitle-display-mode-select"
+                    aria-label="Subtitle Display Mode"
+                    value={subtitleDisplayMode}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleDisplayMode;
+                      setSubtitleDisplayMode(next);
+                      void saveSettings({ subtitleDisplayMode: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="bilingual">Bilingual (Both)</option>
+                    <option value="translated-only">Translated Only</option>
+                    <option value="original-only">Original Only</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="subtitle-line-order"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Line Order
+                  </label>
+                  <select
+                    id="subtitle-line-order"
+                    data-testid="subtitle-line-order-select"
+                    aria-label="Subtitle Line Order"
+                    value={subtitleLineOrder}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleLineOrder;
+                      setSubtitleLineOrder(next);
+                      void saveSettings({ subtitleLineOrder: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="original-first">Original First (Top)</option>
+                    <option value="translated-first">Translated First (Top)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="subtitle-font-size"
+                    className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
+                  >
+                    Preset Scale
+                  </label>
+                  <select
+                    id="subtitle-font-size"
+                    data-testid="subtitle-font-size-select"
+                    aria-label="Subtitle Font Size"
+                    value={subtitleFontSize}
+                    onChange={(e) => {
+                      const next = e.target.value as SubtitleFontSize;
+                      setSubtitleFontSize(next);
+                      void saveSettings({ subtitleFontSize: next });
+                    }}
+                    className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
+                  >
+                    <option value="small">Small (14px)</option>
+                    <option value="standard">Standard (18px)</option>
+                    <option value="large">Large (22px)</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label
-                  htmlFor="subtitle-line-order"
-                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                >
-                  Line Order
-                </label>
-                <select
-                  id="subtitle-line-order"
-                  data-testid="subtitle-line-order-select"
-                  aria-label="Subtitle Line Order"
-                  value={subtitleLineOrder}
-                  onChange={(e) => {
-                    const next = e.target.value as SubtitleLineOrder;
-                    setSubtitleLineOrder(next);
-                    void saveSettings({ subtitleLineOrder: next });
-                  }}
-                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                >
-                  <option value="original-first">Original First (Top)</option>
-                  <option value="translated-first">Translated First (Top)</option>
-                </select>
+              {/* Granular Font Size Sliders */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="original-font-size-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      English Font Size
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleOriginalFontSize}px
+                    </span>
+                  </div>
+                  <input
+                    id="original-font-size-slider"
+                    data-testid="original-font-size-slider"
+                    aria-label="English Font Size"
+                    type="range"
+                    min={12}
+                    max={36}
+                    step={1}
+                    value={subtitleOriginalFontSize}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleOriginalFontSize(next);
+                      void saveSettings({ subtitleOriginalFontSize: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>12px</span>
+                    <span>Default: 18px</span>
+                    <span>36px</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="translated-font-size-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      Vietnamese Font Size
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleTranslatedFontSize}px
+                    </span>
+                  </div>
+                  <input
+                    id="translated-font-size-slider"
+                    data-testid="translated-font-size-slider"
+                    aria-label="Vietnamese Font Size"
+                    type="range"
+                    min={10}
+                    max={30}
+                    step={1}
+                    value={subtitleTranslatedFontSize}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleTranslatedFontSize(next);
+                      void saveSettings({ subtitleTranslatedFontSize: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>10px</span>
+                    <span>Default: 15px</span>
+                    <span>30px</span>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label
-                  htmlFor="subtitle-font-size"
-                  className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2"
-                >
-                  Font Size
-                </label>
-                <select
-                  id="subtitle-font-size"
-                  data-testid="subtitle-font-size-select"
-                  aria-label="Subtitle Font Size"
-                  value={subtitleFontSize}
-                  onChange={(e) => {
-                    const next = e.target.value as SubtitleFontSize;
-                    setSubtitleFontSize(next);
-                    void saveSettings({ subtitleFontSize: next });
-                  }}
-                  className="w-full bg-[#05070e] border border-gray-700 focus:border-[#00f2fe] rounded-lg px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-[#00f2fe] transition-all"
-                >
-                  <option value="small">Small (14px)</option>
-                  <option value="standard">Standard (18px)</option>
-                  <option value="large">Large (22px)</option>
-                </select>
-              </div>
-            </div>
+              {/* Color Presets & Hex Pickers */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                    English Text Color
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {COLOR_PRESETS.map((color) => (
+                      <button
+                        key={`orig-${color}`}
+                        type="button"
+                        data-testid={`original-color-preset-${color}`}
+                        aria-label={`Select English color ${color}`}
+                        onClick={() => {
+                          setSubtitleOriginalColor(color);
+                          void saveSettings({ subtitleOriginalColor: color });
+                        }}
+                        className={`w-6 h-6 rounded-full border transition-all cursor-pointer ${
+                          subtitleOriginalColor.toLowerCase() === color.toLowerCase()
+                            ? 'border-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.8)]'
+                            : 'border-gray-600 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      data-testid="original-color-picker"
+                      aria-label="Custom English Text Color"
+                      value={subtitleOriginalColor}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSubtitleOriginalColor(val);
+                        void saveSettings({ subtitleOriginalColor: val });
+                      }}
+                      className="w-7 h-7 rounded border border-gray-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <span className="text-xs font-mono text-gray-400 uppercase">
+                      {subtitleOriginalColor}
+                    </span>
+                  </div>
+                </div>
 
-            {/* Action Row for Reset Subtitle Position */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 mt-5 border-t border-gray-800/80">
-              <p className="text-xs font-sans text-gray-400 max-w-md">
-                Reposition subtitles freely by dragging the on-screen pill. Double-click the pill or tap reset below to return to the default bottom docking.
-              </p>
-              <div className="flex items-center gap-3">
-                {resetPositionStatus && (
-                  <span className="px-3 py-1 rounded border border-[#00ff88]/60 bg-[#00ff88]/15 text-[#00ff88] font-mono text-xs font-bold shadow-[0_0_10px_rgba(0,255,136,0.3)] animate-in fade-in">
-                    {resetPositionStatus}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  data-testid="reset-subtitle-position-btn"
-                  aria-label="Reset Subtitle Position"
-                  onClick={handleResetSubtitlePosition}
-                  className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reset Subtitle Position
-                </button>
+                <div>
+                  <label className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                    Vietnamese Text Color
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {COLOR_PRESETS.map((color) => (
+                      <button
+                        key={`trans-${color}`}
+                        type="button"
+                        data-testid={`translated-color-preset-${color}`}
+                        aria-label={`Select Vietnamese color ${color}`}
+                        onClick={() => {
+                          setSubtitleTranslatedColor(color);
+                          void saveSettings({ subtitleTranslatedColor: color });
+                        }}
+                        className={`w-6 h-6 rounded-full border transition-all cursor-pointer ${
+                          subtitleTranslatedColor.toLowerCase() === color.toLowerCase()
+                            ? 'border-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.8)]'
+                            : 'border-gray-600 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      data-testid="translated-color-picker"
+                      aria-label="Custom Vietnamese Text Color"
+                      value={subtitleTranslatedColor}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSubtitleTranslatedColor(val);
+                        void saveSettings({ subtitleTranslatedColor: val });
+                      }}
+                      className="w-7 h-7 rounded border border-gray-700 bg-transparent cursor-pointer p-0.5"
+                    />
+                    <span className="text-xs font-mono text-gray-400 uppercase">
+                      {subtitleTranslatedColor}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Background Opacity & Text Shadow Toggle */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-gray-800/80">
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label
+                      htmlFor="bg-opacity-slider"
+                      className="text-xs font-mono text-gray-300 uppercase tracking-wider"
+                    >
+                      Background Opacity
+                    </label>
+                    <span className="text-xs font-mono text-[#00f2fe] font-bold">
+                      {subtitleBackgroundOpacity}%
+                    </span>
+                  </div>
+                  <input
+                    id="bg-opacity-slider"
+                    data-testid="bg-opacity-slider"
+                    aria-label="Background Opacity"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={subtitleBackgroundOpacity}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSubtitleBackgroundOpacity(next);
+                      void saveSettings({ subtitleBackgroundOpacity: next });
+                    }}
+                    className="w-full accent-[#00f2fe] cursor-pointer bg-gray-700 h-1.5 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
+                    <span>0% (Transparent)</span>
+                    <span>Default: 78%</span>
+                    <span>100% (Solid)</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center">
+                  <label className="flex items-center gap-3 p-3 w-full rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="text-shadow-toggle"
+                      aria-label="High Contrast Text Shadow"
+                      checked={subtitleTextShadow}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleTextShadow(next);
+                        void saveSettings({ subtitleTextShadow: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        High Contrast Text Shadow
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        Outlines text for readability across bright backgrounds
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Live Subtitle Preview */}
+              <div className="pt-4 border-t border-gray-800/80">
+                <div className="text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
+                  Live Subtitle Preview
+                </div>
+                <div className="relative rounded-lg bg-[#05070e] border border-gray-800 p-6 flex flex-col items-center justify-center min-h-[140px] overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-gray-900/40 via-transparent to-black/60 pointer-events-none" />
+                  <div
+                    data-testid="subtitle-live-preview"
+                    className="relative z-10 transition-all duration-150 text-center"
+                    style={{
+                      background: `rgba(0, 0, 0, ${subtitleBackgroundOpacity / 100})`,
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      borderRadius: '6px',
+                      padding: '8px 16px',
+                      maxWidth: '90%',
+                      border: subtitleBackgroundOpacity === 0 ? 'none' : '1px solid rgba(255, 255, 255, 0.12)',
+                      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)',
+                      display: 'inline-flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '3px',
+                    }}
+                  >
+                    {subtitleLineOrder === 'original-first' ? (
+                      <>
+                        <div
+                          style={{
+                            fontSize: `${subtitleOriginalFontSize}px`,
+                            color: subtitleOriginalColor,
+                            fontWeight: 600,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          The quick brown fox jumps over the lazy dog.
+                        </div>
+                        <div
+                          style={{
+                            fontSize: `${subtitleTranslatedFontSize}px`,
+                            color: subtitleTranslatedColor,
+                            fontWeight: 500,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          Con cáo nâu nhanh nhẹn nhảy qua con chó lười biếng.
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            fontSize: `${subtitleTranslatedFontSize}px`,
+                            color: subtitleTranslatedColor,
+                            fontWeight: 600,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          Con cáo nâu nhanh nhẹn nhảy qua con chó lười biếng.
+                        </div>
+                        <div
+                          style={{
+                            fontSize: `${subtitleOriginalFontSize}px`,
+                            color: subtitleOriginalColor,
+                            fontWeight: 500,
+                            textShadow: subtitleTextShadow
+                              ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+                              : 'none',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          The quick brown fox jumps over the lazy dog.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Learning Suite Controls */}
+              <div className="pt-4 border-t border-gray-800/80 space-y-3">
+                <div className="text-xs font-mono text-[#00f2fe] uppercase tracking-wider">
+                  Language Learning Suite
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="auto-pause-toggle"
+                      aria-label="Auto-Pause at end of subtitle (Shadowing Mode)"
+                      checked={subtitleAutoPause}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleAutoPause(next);
+                        void saveSettings({ subtitleAutoPause: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        Auto-Pause at end of subtitle (Shadowing Mode)
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        Pauses at segment end for shadowing and repetition
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-[#05070e] border border-gray-800 cursor-pointer hover:border-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      data-testid="hotkeys-toggle"
+                      aria-label="Subtitle Navigation Hotkeys (A: Prev, S: Replay, D: Next)"
+                      checked={subtitleHotkeysEnabled}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setSubtitleHotkeysEnabled(next);
+                        void saveSettings({ subtitleHotkeysEnabled: next });
+                      }}
+                      className="w-4 h-4 rounded border-gray-700 text-[#00f2fe] focus:ring-[#00f2fe] focus:ring-offset-0 bg-[#0a0e1a]"
+                    />
+                    <div>
+                      <div className="text-xs font-mono text-white font-medium">
+                        Subtitle Navigation Hotkeys (A: Prev, S: Replay, D: Next)
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400">
+                        A: Prev segment, S: Replay current, D: Next segment
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Row for Reset Subtitle Position */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-gray-800/80">
+                <p className="text-xs font-sans text-gray-400 max-w-md">
+                  Reposition subtitles freely by dragging the on-screen pill. Double-click the pill or tap reset below to return to the default bottom docking.
+                </p>
+                <div className="flex items-center gap-3">
+                  {resetPositionStatus && (
+                    <span className="px-3 py-1 rounded border border-[#00ff88]/60 bg-[#00ff88]/15 text-[#00ff88] font-mono text-xs font-bold shadow-[0_0_10px_rgba(0,255,136,0.3)] animate-in fade-in">
+                      {resetPositionStatus}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="reset-subtitle-position-btn"
+                    aria-label="Reset Subtitle Position"
+                    onClick={handleResetSubtitlePosition}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-[#00f2fe]/40 hover:border-[#00f2fe] bg-[#00f2fe]/10 hover:bg-[#00f2fe]/20 text-[#00f2fe] font-mono text-xs uppercase tracking-wider transition-all duration-150 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset Subtitle Position
+                  </button>
+                </div>
               </div>
             </div>
           </section>

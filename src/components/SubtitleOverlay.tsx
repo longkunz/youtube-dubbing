@@ -21,6 +21,12 @@ export interface SubtitleOverlayProps {
   className?: string;
   onPositionChange?: (pos: SubtitlePosition) => void;
   onResetPosition?: () => void;
+  originalFontSize?: number;
+  translatedFontSize?: number;
+  originalColor?: string;
+  translatedColor?: string;
+  backgroundOpacity?: number;
+  textShadowEnabled?: boolean;
 }
 
 export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
@@ -35,6 +41,12 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   className = '',
   onPositionChange,
   onResetPosition,
+  originalFontSize,
+  translatedFontSize,
+  originalColor,
+  translatedColor,
+  backgroundOpacity,
+  textShadowEnabled,
 }) => {
   const currentSegment = segment ?? activeSegment ?? null;
   const [isDragging, setIsDragging] = useState(false);
@@ -77,15 +89,25 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const isBilingual = shouldShowTranslated && shouldShowOriginal;
   const originalIsPrimary = !isBilingual || lineOrder === 'original-first';
 
+  const textShadowStyle =
+    textShadowEnabled !== false
+      ? '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)'
+      : 'none';
+
   const renderTranslated = () => (
     <div
       key="translated"
       className="subtitle-translated"
       style={{
-        fontSize: originalIsPrimary && isBilingual ? secondaryFontSizePx : fontSizePx,
+        fontSize:
+          translatedFontSize !== undefined
+            ? `${translatedFontSize}px`
+            : originalIsPrimary && isBilingual
+            ? secondaryFontSizePx
+            : fontSizePx,
         fontWeight: originalIsPrimary && isBilingual ? 500 : 600,
-        color: '#00f2fe',
-        textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)',
+        color: translatedColor ?? '#00f2fe',
+        textShadow: textShadowStyle,
         letterSpacing: '0.01em',
         lineHeight: 1.35,
       }}
@@ -99,10 +121,15 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       key="original"
       className="subtitle-original"
       style={{
-        fontSize: originalIsPrimary ? fontSizePx : secondaryFontSizePx,
+        fontSize:
+          originalFontSize !== undefined
+            ? `${originalFontSize}px`
+            : originalIsPrimary
+            ? fontSizePx
+            : secondaryFontSizePx,
         fontWeight: originalIsPrimary ? 600 : 500,
-        color: '#ffffff',
-        textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.8)',
+        color: originalColor ?? '#ffffff',
+        textShadow: textShadowStyle,
         letterSpacing: '0.01em',
         lineHeight: 1.35,
       }}
@@ -223,7 +250,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         onDoubleClick={handleDoubleClick}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'rgba(0, 0, 0, 0.78)',
+          background: `rgba(0, 0, 0, ${(backgroundOpacity !== undefined ? backgroundOpacity : 78) / 100})`,
           backdropFilter: 'blur(8px)',
           WebkitBackdropFilter: 'blur(8px)',
           color: '#ffffff',
@@ -236,7 +263,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
           alignItems: 'center',
           gap: '2px',
           maxWidth: '90vw',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          border: backgroundOpacity === 0 ? 'none' : '1px solid rgba(255, 255, 255, 0.12)',
           boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)',
           wordBreak: 'break-word',
           userSelect: 'text',
