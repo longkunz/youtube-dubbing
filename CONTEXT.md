@@ -89,7 +89,11 @@ The slide-over drawer interface presenting the complete configuration dashboard 
 _Avoid_: Options page, settings popup, configuration window, options tab, centered modal
 
 **Parallel Caption Overlay**:
-The unified, centered in-player visual subtitle component displaying synchronized source dialogue alongside translated text over the video player within a dedicated Shadow DOM Mount, capable of operating independently of Dub Track audio.
+The unified, in-player visual subtitle component displaying synchronized source dialogue alongside translated text in an eJOY-style hierarchical bilingual layout (prominent source line on top, high-contrast translation below, translucent dark pill with text-shadow contrast) over the video player within a dedicated Shadow DOM Mount, capable of operating independently of Dub Track audio.
 _Avoid_: Dual CC, bilingual subs, sub hack, caption merger, double subtitle
+
+**Draggable Subtitle Position**:
+The user-customized, percentage-based spatial coordinates of the Parallel Caption Overlay relative to the host video player, bounded within the player viewport, persisted in extension storage across fullscreen/theater resizes, and resettable via double-click or Command Center.
+_Avoid_: Absolute pixel coordinate, sub offset, fixed position, drag state
 
 
