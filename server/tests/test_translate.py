@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from app.lang import normalize_lang
 from app.main import create_app
-from app.translate import MarianBatchTranslator, collapse_stutter
 
 
 class FakeTranslator:
@@ -123,35 +122,75 @@ def test_text_over_2000_chars_is_400():
     assert response.status_code == 400
 
 
-class _FakeTokenizer:
-    def encode(self, text: str):
-        return [1, 2]
-
-    def convert_ids_to_tokens(self, ids):
-        return ["▁Hello", "</s>"]
-
-    def convert_tokens_to_ids(self, tokens):
-        return [3, 4]
-
-    def decode(self, ids):
-        return "Xin chào"
 
 
-class _FakeCt2:
-    def translate_batch(self, tokens, **kwargs):
-        class _Result:
-            hypotheses = [["▁Xin", "▁chào"]]
+import pytest
 
-        assert tokens == [["▁Hello", "</s>"]]
-        assert kwargs.get("max_decoding_length") == 80
-        assert kwargs.get("no_repeat_ngram_size") == 3
-        return [_Result()]
+from app.cache import FileCache
+from app.translate import DelimiterMismatchError, HyMt2Translator, build_translate_prompt, join_cues, split_translation
 
 
-def test_marian_batch_translator_uses_hf_tokenizer_not_spm():
-    translator = MarianBatchTranslator(_FakeCt2(), _FakeTokenizer())
-    assert translator.translate_batch(["Hello"]) == ["Xin chào"]
+def test_join_and_split_roundtrip():
+    joined = join_cues(["Welcome back", "Hello"])
+    assert joined == "Welcome back\n<CUESEP>\nHello"
+    assert split_translation("Chào mừng quay lại\n<CUESEP>\nXin chào") == [
+        "Chào mừng quay lại",
+        "Xin chào",
+    ]
 
 
-def test_collapse_stutter_stops_bye_loops():
-    assert collapse_stutter("Vì vậy, bây bây bây bây bây bây bây bây.") == "Vì vậy, bây."
+def test_split_counts_inline_and_empty_pieces():
+    assert len(split_translation("A<CUESEP>B<CUESEP>")) == 3
+
+
+def test_build_translate_prompt_uses_official_delimiter_instruction():
+    prompt = build_translate_prompt("Hello\n<CUESEP>\nWorld")
+    assert prompt.startswith("Please accurately translate the following text into Vietnamese.")
+    assert "retain the exact same number of delimiters" in prompt
+    assert prompt.endswith("Hello\n<CUESEP>\nWorld")
+
+
+def test_hymt2_translate_texts_uses_generate_and_source_cache(tmp_path):
+    calls = []
+
+    def generate(prompt: str) -> str:
+        calls.append(prompt)
+        return "VI:Welcome back\n<CUESEP>\nVI:Hello"
+
+    translator = HyMt2Translator(generate, cache=FileCache(tmp_path))
+    out = translator.translate_texts(["Welcome back", "Hello"], source="en")
+    assert out == ["VI:Welcome back", "VI:Hello"]
+    assert len(calls) == 1
+    cached = translator.translate_texts(["Welcome back", "Hello"], source="en")
+    assert cached == out
+    assert len(calls) == 1
+
+
+def test_hymt2_partial_cache_only_sends_misses(tmp_path):
+    cache = FileCache(tmp_path)
+    cache.set_text("en|vi|Welcome back", "Đã cache")
+    calls = []
+
+    def generate(prompt: str) -> str:
+        calls.append(prompt)
+        assert "<CUESEP>" not in prompt.split("placement.")[-1]
+        return "VI:Hello"
+
+    translator = HyMt2Translator(generate, cache=cache)
+    out = translator.translate_texts(["Welcome back", "Hello"], source="en")
+    assert out == ["Đã cache", "VI:Hello"]
+    assert len(calls) == 1
+
+
+def test_hymt2_mismatch_raises_and_does_not_write_cache(tmp_path):
+    cache = FileCache(tmp_path)
+
+    def generate(prompt: str) -> str:
+        return "only one piece"
+
+    translator = HyMt2Translator(generate, cache=cache)
+    with pytest.raises(DelimiterMismatchError):
+        translator.translate_texts(["A", "B"], source="ja")
+    assert cache.get_text("ja|vi|A") is None
+    assert cache.get_text("ja|vi|B") is None
+

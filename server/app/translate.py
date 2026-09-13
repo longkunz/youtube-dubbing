@@ -1,84 +1,70 @@
-import re
+from __future__ import annotations
+
+import threading
+from collections.abc import Callable
 
 from app.cache import FileCache
 
-_STUTTER = re.compile(r"\b(\S+)(?:\s+\1){2,}\b", re.UNICODE)
+CUESEP = "<CUESEP>"
+
+_PROMPT_PREFIX = (
+    "Please accurately translate the following text into Vietnamese.\n"
+    "You must retain the exact same number of delimiters in the translation. "
+    "Strictly do not omit, escape, or translate these symbols, and pay close "
+    "attention to their placement.\n\n"
+)
 
 
-def collapse_stutter(text: str) -> str:
-    """Collapse 'bây bây bây bây' loops that small Marian models emit."""
-    previous = None
-    current = text.strip()
-    while previous != current:
-        previous = current
-        current = _STUTTER.sub(r"\1", current)
-    return current
+class DelimiterMismatchError(Exception):
+    """Hy-MT2 returned a different number of <CUESEP> pieces than non-empty cues."""
 
 
-class MarianBatchTranslator:
-    """CTranslate2 Marian weights + Hugging Face tokenizer (not source.spm).
-
-    `ct2-transformers-converter` writes model.bin and does not copy SentencePiece
-    files. Official CTranslate2 usage is AutoTokenizer.encode → translate_batch.
-    """
-
-    HF_MODEL = "Helsinki-NLP/opus-mt-en-vi"
-
-    def __init__(self, ct2, tokenizer):
-        self._ct2 = ct2
-        self._tokenizer = tokenizer
-
-    @classmethod
-    def load(cls, model_path: str, cache_dir: str | None = None):
-        import ctranslate2
-        from transformers import AutoTokenizer
-
-        ct2 = ctranslate2.Translator(model_path, device="cpu")
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
-        except Exception:
-            tokenizer = AutoTokenizer.from_pretrained(cls.HF_MODEL, cache_dir=cache_dir)
-        return cls(ct2, tokenizer)
-
-    def translate_batch(self, texts: list[str]) -> list[str]:
-        tokens = [
-            self._tokenizer.convert_ids_to_tokens(self._tokenizer.encode(text))
-            for text in texts
-        ]
-        results = self._ct2.translate_batch(
-            tokens,
-            max_decoding_length=80,
-            repetition_penalty=1.3,
-            no_repeat_ngram_size=3,
-        )
-        decoded = []
-        for item in results:
-            raw = self._tokenizer.decode(self._tokenizer.convert_tokens_to_ids(item.hypotheses[0]))
-            decoded.append(collapse_stutter(raw))
-        return decoded
+def join_cues(texts: list[str]) -> str:
+    return f"\n{CUESEP}\n".join(texts)
 
 
-class CTranslate2Translator:
-    def __init__(self, translator, cache: FileCache | None = None):
-        self._translator = translator
+def split_translation(output: str) -> list[str]:
+    return [part.strip() for part in output.split(CUESEP)]
+
+
+def build_translate_prompt(joined: str) -> str:
+    return _PROMPT_PREFIX + joined
+
+
+class HyMt2Translator:
+    def __init__(
+        self,
+        generate: Callable[[str], str],
+        cache: FileCache | None = None,
+        lock: threading.Lock | None = None,
+    ):
+        self._generate = generate
         self._cache = cache
+        self._lock = lock or threading.Lock()
 
-    def translate_texts(self, texts: list[str]) -> list[str]:
-        results = [None] * len(texts)
-        pending_idx = []
-        pending_text = []
+    def translate_texts(self, texts: list[str], *, source: str) -> list[str]:
+        results: list[str | None] = [None] * len(texts)
+        pending_idx: list[int] = []
+        pending_text: list[str] = []
         for i, text in enumerate(texts):
             if self._cache:
-                hit = self._cache.get_text(f"en|vi|{text}")
+                hit = self._cache.get_text(f"{source}|vi|{text}")
                 if hit is not None:
                     results[i] = hit
                     continue
             pending_idx.append(i)
             pending_text.append(text)
         if pending_text:
-            translated = self._translator.translate_batch(pending_text)
-            for i, out in zip(pending_idx, translated):
+            prompt = build_translate_prompt(join_cues(pending_text))
+            with self._lock:
+                raw = self._generate(prompt)
+            pieces = split_translation(raw)
+            if len(pieces) != len(pending_text):
+                raise DelimiterMismatchError(
+                    f"expected {len(pending_text)} pieces, got {len(pieces)}"
+                )
+            for i, out in zip(pending_idx, pieces):
                 results[i] = out
                 if self._cache:
-                    self._cache.set_text(f"en|vi|{texts[i]}", out)
-        return results
+                    self._cache.set_text(f"{source}|vi|{texts[i]}", out)
+        return results  # type: ignore[return-value]
